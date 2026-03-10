@@ -11,6 +11,8 @@ sprite_x: .res 1
 sprite_y: .res 1
 buttons1: .res 1
 nmi_ready: .res 1
+game_state: .res 1
+ptr: .res 2
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -59,98 +61,78 @@ ClearOAM:
     LDA sprite_x
     STA OAM_RAM+3       ; Sprite 0 X
 
-LoadPalette:
-    LDA $2002   ; reset latch
-    LDA #$3F
-    STA $2006
+    ; --- Setup Game State ---
     LDA #$00
-    STA $2006
+    STA game_state
 
-    LDX #$00
-    LDA #$0F    ; Black
-InitPaletteLoop:
-    STA $2007
-    INX
-    CPX #$20    ; 32 entries
-    BNE InitPaletteLoop
-
-    ; Set Background Palette 0, Color 1 to White
+LoadPalettes:
     LDA $2002
     LDA #$3F
     STA $2006
-    LDA #$01
+    LDA #$00
     STA $2006
-    LDA #$30        ; White
-    STA $2007
 
-    ; Set Sprite Palette 0, Color 1 to White
+    LDX #$00
+LoadPalettesLoop:
+    LDA title_pal, x
+    STA $2007
+    INX
+    CPX #$10
+    BNE LoadPalettesLoop
+
+    ; Set Sprite Palette 0, Color 1 to White for Gameplay
     LDA $2002
     LDA #$3F
     STA $2006
-    LDA #$11        ; Address $3F11 (Sprite Palette 0, Color 1)
+    LDA #$11
     STA $2006
-    LDA #$30        ; White
+    LDA #$30
     STA $2007
 
-    ; --- Load Graphics (CHR RAM) ---
-    LDA $2002       ; reset latch
-    LDA #$00
-    STA $2006       ; PPU Addr $0000 (Start of Pattern Table)
+LoadCHR:
+    LDA $2002
     LDA #$00
     STA $2006
-
-    ; 1. Clear Tile 0 (Make it empty/black)
-    LDX #$00
-ClearTile0:
-    LDA #$00
-    STA $2007
-    INX
-    CPX #$10        ; 16 bytes needed for one tile
-    BNE ClearTile0
-
-    ; 2. Load Tile 1 (Make it solid)
-    ; Note: PPU Addr is already at $0010 after the previous loop writes
-    LDX #$00
-LoadTile1:
-    LDA #$FF        ; Full pixel row (Solid)
-    STA $2007
-    INX
-    CPX #$08
-    BNE LoadTile1
+    STA $2006
     
-    LDX #$00
-ZeroPlane1:
-    LDA #$00
-    STA $2007
-    INX
-    CPX #$08
-    BNE ZeroPlane1
+    LDA #<title_chr
+    STA ptr
+    LDA #>title_chr
+    STA ptr+1
 
+    LDX #$10    ; 16 pages of 256 bytes = 4096 bytes (4KB)
+    LDY #$00
+CopyCHRLoop:
+    LDA (ptr), y
+    STA $2007
+    INY
+    BNE CopyCHRLoop
+    INC ptr+1
+    DEX
+    BNE CopyCHRLoop
+
+LoadNametable:
     LDA $2002
     LDA #$20
     STA $2006
     LDA #$00
     STA $2006
 
-    ; Clear Nametable (1024 bytes: 960 NT + 64 AT)
-    LDX #$00
-    LDY #$04        ; Loop 4 times (4 * 256 = 1024)
-    LDA #$00        ; Tile 0 (Empty)
-ClearNT:
-    STA $2007
-    INX
-    BNE ClearNT
-    DEY
-    BNE ClearNT
+    LDA #<title_nam
+    STA ptr
+    LDA #>title_nam
+    STA ptr+1
 
-    ; Draw One Tile at Top-Left ($2000)
-    LDA $2002
-    LDA #$20
-    STA $2006
-    LDA #$00
-    STA $2006
-    LDA #$01        ; Tile 1
+    LDX #$04    ; 4 pages = 1024 bytes (Name + Attr tables)
+    LDY #$00
+CopyNAMLoop:
+    LDA (ptr), y
     STA $2007
+    INY
+    BNE CopyNAMLoop
+    INC ptr+1
+    DEX
+    BNE CopyNAMLoop
 
     LDA #%00011010  ; background on, sprites on
     STA $2001
@@ -176,6 +158,22 @@ WAITVBLANK:
     ; Read Controller 1
     JSR ReadController1
 
+    ; Game Logic: Machine State
+    LDA game_state
+    BEQ StateTitle
+    JMP StateGameplay
+
+StateTitle:
+    LDA buttons1
+    AND #%00010000      ; Start is 5th bit
+    BEQ DoneInput
+    INC game_state      ; Transition to StateGameplay
+
+    ; Initialize Sprite 0 Graphics inside Gameplay memory mapping
+    ; (Could swap nametables here, but for now just turn on sprite)
+    JMP DoneInput
+
+StateGameplay:
     ; Game Logic: Movement
 CheckUp:
     LDA buttons1
@@ -199,11 +197,15 @@ CheckRight:
     INC sprite_x
 DoneInput:
 
+    LDA game_state
+    BEQ SkipSpriteUpdate
+
     ; Update OAM RAM
     LDA sprite_y
     STA OAM_RAM
     LDA sprite_x
     STA OAM_RAM+3
+SkipSpriteUpdate:
 
     JMP FOREVER
 
@@ -235,6 +237,14 @@ NMI:
 
 IRQ:
    RTI
+
+; =====================
+; DATA
+; =====================
+.segment "RODATA"
+title_chr: .incbin "title.chr"
+title_nam: .incbin "title.nam"
+title_pal: .incbin "title.pal"
 
 ; =====================
 ; VECTORS
