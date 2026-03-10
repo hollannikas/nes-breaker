@@ -6,6 +6,15 @@
 .byte $00
 .res 8, 0
 
+.segment "ZEROPAGE"
+sprite_x: .res 1
+sprite_y: .res 1
+buttons1: .res 1
+nmi_ready: .res 1
+
+.segment "OAM"
+OAM_RAM: .res 256
+
 .segment "CODE"
 ; Reset Vector
 RESET:
@@ -27,6 +36,29 @@ PPUWARMUP:
     STX $2000	; Disable NMI
     STX $2001	; Disable rendering
 
+    ; --- Clear OAM RAM ---
+    LDY #$00
+    LDA #$FF    ; Move to Y=$FF (off-screen)
+ClearOAM:
+    STA OAM_RAM, y
+    INY
+    INY
+    INY
+    INY
+    BNE ClearOAM
+
+    ; --- Setup First Sprite ---
+    LDA #128
+    STA sprite_x
+    STA sprite_y
+    STA OAM_RAM         ; Sprite 0 Y
+    LDA #$01
+    STA OAM_RAM+1       ; Sprite 0 Tile Index (Tile 1)
+    LDA #$00
+    STA OAM_RAM+2       ; Sprite 0 Attributes (Palette 0)
+    LDA sprite_x
+    STA OAM_RAM+3       ; Sprite 0 X
+
 LoadPalette:
     LDA $2002   ; reset latch
     LDA #$3F
@@ -42,11 +74,20 @@ InitPaletteLoop:
     CPX #$20    ; 32 entries
     BNE InitPaletteLoop
 
-    ; Set Color 1 to White
+    ; Set Background Palette 0, Color 1 to White
     LDA $2002
     LDA #$3F
     STA $2006
     LDA #$01
+    STA $2006
+    LDA #$30        ; White
+    STA $2007
+
+    ; Set Sprite Palette 0, Color 1 to White
+    LDA $2002
+    LDA #$3F
+    STA $2006
+    LDA #$11        ; Address $3F11 (Sprite Palette 0, Color 1)
     STA $2006
     LDA #$30        ; White
     STA $2007
@@ -111,8 +152,11 @@ ClearNT:
     LDA #$01        ; Tile 1
     STA $2007
 
-    LDA #%00001010  ; background on
+    LDA #%00011010  ; background on, sprites on
     STA $2001
+
+    LDA #$80        ; Enable NMI
+    STA $2000
 
     ; --- Reset Scroll ---
     LDA $2002       ; Reset latch
@@ -122,12 +166,72 @@ ClearNT:
 
 FOREVER:
 WAITVBLANK:
-   BIT $2002
-   BPL WAITVBLANK
-   JMP FOREVER
+    LDA nmi_ready
+    BEQ WAITVBLANK
+    
+    ; Clear NMI flag
+    LDA #$00
+    STA nmi_ready
+
+    ; Read Controller 1
+    JSR ReadController1
+
+    ; Game Logic: Movement
+CheckUp:
+    LDA buttons1
+    AND #%00001000      ; Up is 4th bit
+    BEQ CheckDown
+    DEC sprite_y
+CheckDown:
+    LDA buttons1
+    AND #%00000100      ; Down is 3rd bit
+    BEQ CheckLeft
+    INC sprite_y
+CheckLeft:
+    LDA buttons1
+    AND #%00000010      ; Left is 2nd bit
+    BEQ CheckRight
+    DEC sprite_x
+CheckRight:
+    LDA buttons1
+    AND #%00000001      ; Right is 1st bit
+    BEQ DoneInput
+    INC sprite_x
+DoneInput:
+
+    ; Update OAM RAM
+    LDA sprite_y
+    STA OAM_RAM
+    LDA sprite_x
+    STA OAM_RAM+3
+
+    JMP FOREVER
+
+ReadController1:
+    LDA #$01
+    STA $4016
+    LDA #$00
+    STA $4016
+    LDX #$08
+ReadController1Loop:
+    LDA $4016
+    LSR A
+    ROL buttons1
+    DEX
+    BNE ReadController1Loop
+    RTS
 
 NMI: 
-   RTI
+    ; OAM DMA
+    LDA #$00
+    STA $2003
+    LDA #$02
+    STA $4014
+
+    ; Set NMI Ready
+    LDA #$01
+    STA nmi_ready
+    RTI
 
 IRQ:
    RTI
