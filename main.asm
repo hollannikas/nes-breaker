@@ -169,8 +169,38 @@ StateTitle:
     BEQ DoneInput
     INC game_state      ; Transition to StateGameplay
 
-    ; Initialize Sprite 0 Graphics inside Gameplay memory mapping
-    ; (Could swap nametables here, but for now just turn on sprite)
+    ; --- CLEAR SCREEN FOR GAMEPLAY ---
+    ; Turn off rendering to safely clear memory
+    LDA #$00
+    STA $2001
+
+    ; Clear Nametable ($2000-$23FF)
+    LDA $2002
+    LDA #$20
+    STA $2006
+    LDA #$00
+    STA $2006
+
+    LDX #$00
+    LDY #$04        ; Loop 4 times (4 * 256 = 1024)
+    LDA #$00        ; Blank Tile
+ClearNTGame:
+    STA $2007
+    INX
+    BNE ClearNTGame
+    DEY
+    BNE ClearNTGame
+
+    ; Reset Scroll
+    LDA $2002
+    LDA #$00
+    STA $2005
+    STA $2005
+
+    ; Turn rendering back on
+    LDA #%00011010  ; background on, sprites on
+    STA $2001
+
     JMP DoneInput
 
 StateGameplay:
