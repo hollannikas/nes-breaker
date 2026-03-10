@@ -1,0 +1,28 @@
+name: Build NES ROM
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install cc65
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y cc65
+
+    - name: Build ROM
+      run: make clean && make
+
+    - name: Upload ROM Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: game-rom
+        path: game.nes
