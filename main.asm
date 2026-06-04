@@ -13,6 +13,18 @@ buttons1: .res 1
 nmi_ready: .res 1
 game_state: .res 1
 ptr: .res 2
+map_row: .res 1
+map_col: .res 1
+tile_temp: .res 1
+temp_coord: .res 1
+col_x: .res 1
+col_y: .res 1
+col_box_x: .res 1
+col_box_y: .res 1
+col_box_w: .res 1
+col_box_h: .res 1
+point_x: .res 1
+point_y: .res 1
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -49,17 +61,37 @@ ClearOAM:
     INY
     BNE ClearOAM
 
-    ; --- Setup First Sprite ---
+    ; --- Setup Meta Sprite Anchor ---
     LDA #128
     STA sprite_x
     STA sprite_y
-    STA OAM_RAM         ; Sprite 0 Y
-    LDA #$01
-    STA OAM_RAM+1       ; Sprite 0 Tile Index (Tile 1)
-    LDA #$00
-    STA OAM_RAM+2       ; Sprite 0 Attributes (Palette 0)
-    LDA sprite_x
-    STA OAM_RAM+3       ; Sprite 0 X
+    
+    ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
+    LDX #$00        ; OAM Index
+    LDY #$00        ; Tile Index
+InitPlayerSpritesLoop:
+    LDA #$FF        ; Initial Y (Offscreen)
+    STA OAM_RAM, x
+    INX
+    TYA             ; Tile Index (0-23)
+    STA OAM_RAM, x
+    INX
+    ; Palette selection: If Tile Index < 12, use Pal 0, else Pal 1
+    CPY #12
+    BCC SetPal0
+    LDA #$01        ; Palette 1
+    JMP StorePal
+SetPal0:
+    LDA #$00        ; Palette 0
+StorePal:
+    STA OAM_RAM, x
+    INX
+    LDA #$FF        ; Initial X (Offscreen)
+    STA OAM_RAM, x
+    INX
+    INY
+    CPY #24
+    BNE InitPlayerSpritesLoop
 
     ; --- Setup Game State ---
     LDA #$00
@@ -80,14 +112,7 @@ LoadPalettesLoop:
     CPX #$10
     BNE LoadPalettesLoop
 
-    ; Set Sprite Palette 0, Color 1 to White for Gameplay
-    LDA $2002
-    LDA #$3F
-    STA $2006
-    LDA #$11
-    STA $2006
-    LDA #$30
-    STA $2007
+
 
 LoadCHR:
     LDA $2002
@@ -110,6 +135,30 @@ CopyCHRLoop:
     INC ptr+1
     DEX
     BNE CopyCHRLoop
+
+LoadPlayerCHR:
+    LDA $2002
+    LDA #$10        ; Sprite Pattern Table starts at $1000
+    STA $2006
+    LDA #$00
+    STA $2006
+    
+    LDA #<player_chr
+    STA ptr
+    LDA #>player_chr
+    STA ptr+1
+
+    ; We only need 384 bytes now, crossing the page boundary.
+    LDX #2      ; 2 pages (512 bytes is enough to cover 384)
+    LDY #$00
+CopyPlayerCHRLoop:
+    LDA (ptr), y
+    STA $2007
+    INY
+    BNE CopyPlayerCHRLoop
+    INC ptr+1
+    DEX
+    BNE CopyPlayerCHRLoop
 
 LoadNametable:
     LDA $2002
@@ -137,7 +186,7 @@ CopyNAMLoop:
     LDA #%00011010  ; background on, sprites on
     STA $2001
 
-    LDA #$80        ; Enable NMI
+    LDA #$88        ; Enable NMI, Background $0000, Sprites $1000
     STA $2000
 
     ; --- Reset Scroll ---
@@ -166,30 +215,56 @@ WAITVBLANK:
 StateTitle:
     LDA buttons1
     AND #%00010000      ; Start is 5th bit
-    BEQ DoneInput
+    BNE StartPressed
+    JMP DoneInput       ; Out of bounds branch fixed
+StartPressed:
     INC game_state      ; Transition to StateGameplay
 
     ; --- CLEAR SCREEN FOR GAMEPLAY ---
-    ; Turn off rendering to safely clear memory
+    ; Turn off NMI and rendering to safely clear memory and draw
     LDA #$00
-    STA $2001
+    STA $2000           ; Disable NMI
+    STA $2001           ; Disable rendering
 
-    ; Clear Nametable ($2000-$23FF)
+    ; Load Custom Background CHR
+    JSR LoadGameplayCHR
+
+    ; Load Custom Background Palettes
+    JSR LoadGameplayPalettes
+
+    ; Draw our gameplay background map
+    JSR DrawMap
+
+    ; Draw background attributes
+    JSR DrawAttributes
+
+    ; Load 3 player colors into Sprite Palette 0 ($3F11 - $3F13)
     LDA $2002
-    LDA #$20
+    LDA #$3F
     STA $2006
-    LDA #$00
+    LDA #$11
+    STA $2006
+    
+    LDA player_pal+0
+    STA $2007
+    LDA player_pal+1
+    STA $2007
+    LDA player_pal+2
+    STA $2007
+
+    ; Load 3 player colors into Sprite Palette 1 ($3F15 - $3F17)
+    LDA $2002
+    LDA #$3F
+    STA $2006
+    LDA #$15
     STA $2006
 
-    LDX #$00
-    LDY #$04        ; Loop 4 times (4 * 256 = 1024)
-    LDA #$00        ; Blank Tile
-ClearNTGame:
+    LDA player_pal+3
     STA $2007
-    INX
-    BNE ClearNTGame
-    DEY
-    BNE ClearNTGame
+    LDA player_pal+4
+    STA $2007
+    LDA player_pal+5
+    STA $2007
 
     ; Reset Scroll
     LDA $2002
@@ -197,47 +272,179 @@ ClearNTGame:
     STA $2005
     STA $2005
 
-    ; Turn rendering back on
+    ; Re-enable NMI and rendering
+    LDA #$88        ; Enable NMI, Background $0000, Sprites $1000
+    STA $2000
     LDA #%00011010  ; background on, sprites on
     STA $2001
 
     JMP DoneInput
 
 StateGameplay:
-    ; Game Logic: Movement
-CheckUp:
+    ; --- Vertical Movement Check ---
+    LDA sprite_y
+    STA temp_coord      ; Initial proposed Y
+
     LDA buttons1
-    AND #%00001000      ; Up is 4th bit
-    BEQ CheckDown
-    DEC sprite_y
-CheckDown:
+    AND #%00001000      ; Up
+    BEQ @not_up
+    DEC temp_coord
+    JMP @do_y_check
+@not_up:
     LDA buttons1
-    AND #%00000100      ; Down is 3rd bit
-    BEQ CheckLeft
-    INC sprite_y
-CheckLeft:
+    AND #%00000100      ; Down
+    BEQ @no_y_move
+    INC temp_coord
+
+@do_y_check:
+    ; Setup collision parameters for Y movement
+    LDA sprite_x
+    STA col_x
+    LDA temp_coord
+    STA col_y
+    LDA #4
+    STA col_box_x
+    LDA #16
+    STA col_box_y
+    LDA #15
+    STA col_box_w
+    LDA #15
+    STA col_box_h
+
+    JSR CheckSpriteCollision
+    BNE @no_y_move      ; Collision, don't move Y
+    LDA temp_coord
+    STA sprite_y        ; Apply Y movement
+@no_y_move:
+
+    ; --- Horizontal Movement Check ---
+    LDA sprite_x
+    STA temp_coord      ; Initial proposed X
+
     LDA buttons1
-    AND #%00000010      ; Left is 2nd bit
-    BEQ CheckRight
-    DEC sprite_x
-CheckRight:
+    AND #%00000010      ; Left
+    BEQ @not_left
+    DEC temp_coord
+    JMP @do_x_check
+@not_left:
     LDA buttons1
-    AND #%00000001      ; Right is 1st bit
-    BEQ DoneInput
-    INC sprite_x
+    AND #%00000001      ; Right
+    BEQ @no_x_move
+    INC temp_coord
+
+@do_x_check:
+    ; Setup collision parameters for X movement
+    LDA temp_coord
+    STA col_x
+    LDA sprite_y
+    STA col_y
+    LDA #4
+    STA col_box_x
+    LDA #16
+    STA col_box_y
+    LDA #15
+    STA col_box_w
+    LDA #15
+    STA col_box_h
+
+    JSR CheckSpriteCollision
+    BNE @no_x_move      ; Collision, don't move X
+    LDA temp_coord
+    STA sprite_x        ; Apply X movement
+@no_x_move:
+
 DoneInput:
 
     LDA game_state
     BEQ SkipSpriteUpdate
 
-    ; Update OAM RAM
-    LDA sprite_y
-    STA OAM_RAM
-    LDA sprite_x
-    STA OAM_RAM+3
+    JSR UpdateMetaSprite
 SkipSpriteUpdate:
 
     JMP FOREVER
+
+; -----------------------------------------
+; Subroutine: UpdateMetaSprite
+; Takes the root `sprite_x` and `sprite_y` 
+; and mathematically offsets the 12 hardware 
+; sprites to form a 24x32 character.
+; -----------------------------------------
+UpdateMetaSprite:
+    LDX #$00        ; OAM offset (0, 4, 8, ... 92)
+    LDY #$00        ; Tile loop counter (0 to 23)
+UpdateGridLoop:
+    ; We need to modulo the Tile Loop counter by 12, because both layers 
+    ; stack on top of each other and follow the exact same 3x4 grid!
+    TYA
+Mod12Loop:
+    CMP #12
+    BCC CalcGrid
+    SEC
+    SBC #12
+    JMP Mod12Loop
+
+CalcGrid:
+    ; A is now 0-11, representing the grid index
+    ; Calculate row and column from A
+    ; Let's save A
+    PHA
+
+    ; --- Calculate Y Offset ---
+    ; Row = A / 3
+    ; We do CMP on A (the modded offset)
+    CMP #3
+    BCC Row0
+    CMP #6
+    BCC Row1
+    CMP #9
+    BCC Row2
+Row3:
+    LDA sprite_y
+    CLC
+    ADC #24
+    JMP SetY
+Row2:
+    LDA sprite_y
+    CLC
+    ADC #16
+    JMP SetY
+Row1:
+    LDA sprite_y
+    CLC
+    ADC #8
+    JMP SetY
+Row0:
+    LDA sprite_y
+SetY:
+    STA OAM_RAM, x
+
+    ; --- Calculate X Offset ---
+    ; Col = A % 3
+    PLA              ; Restore A (modded offset 0-11)
+ColLoop:
+    CMP #3
+    BCC SetColPos
+    SEC
+    SBC #3
+    JMP ColLoop
+SetColPos:
+    ; A is now 0, 1, or 2
+    ASL A
+    ASL A
+    ASL A           ; Multiply by 8
+    CLC
+    ADC sprite_x
+    STA OAM_RAM+3, x
+
+    ; Increment
+    INX
+    INX
+    INX
+    INX
+    INY
+    CPY #24         ; Ensure we update all 24 sprites
+    BNE UpdateGridLoop
+    RTS
 
 ReadController1:
     LDA #$01
@@ -253,12 +460,306 @@ ReadController1Loop:
     BNE ReadController1Loop
     RTS
 
+LoadGameplayCHR:
+    LDA $2002
+    LDA #$00
+    STA $2006
+    LDA #$10        ; Start at tile index $01 (PPU address $0010)
+    STA $2006
+    
+    LDA #<bg_tiles
+    STA ptr
+    LDA #>bg_tiles
+    STA ptr+1
+
+    LDY #$00
+@loop:
+    LDA (ptr), y
+    STA $2007
+    INY
+    CPY #128        ; 8 tiles * 16 bytes = 128 bytes
+    BNE @loop
+    RTS
+
+LoadGameplayPalettes:
+    LDA $2002
+    LDA #$3F
+    STA $2006
+    LDA #$00        ; Background palettes start at $3F00
+    STA $2006
+    LDX #$00
+@loop:
+    LDA game_bg_pal, x
+    STA $2007
+    INX
+    CPX #16
+    BNE @loop
+    RTS
+
+DrawMap:
+    ; Set PPU address to $2000
+    LDA $2002
+    LDA #$20
+    STA $2006
+    LDA #$00
+    STA $2006
+
+    LDA #0
+    STA map_row
+
+@row_loop:
+    ; --- Draw Top Half ---
+    LDA #0
+    STA map_col
+@top_col_loop:
+    ; Calculate map index: map_row * 16 + map_col
+    LDA map_row
+    ASL A
+    ASL A
+    ASL A
+    ASL A           ; A = map_row * 16
+    CLC
+    ADC map_col     ; A = map_row * 16 + map_col
+    TAX
+    LDA game_map, x ; Get metatile type
+    BNE @top_wall
+    ; Floor top-half
+    LDA #$01        ; Floor TL
+    STA $2007
+    LDA #$02        ; Floor TR
+    STA $2007
+    JMP @top_next
+@top_wall:
+    LDA #$05        ; Wall TL
+    STA $2007
+    LDA #$06        ; Wall TR
+    STA $2007
+@top_next:
+    INC map_col
+    LDA map_col
+    CMP #16
+    BNE @top_col_loop
+
+    ; --- Draw Bottom Half ---
+    LDA #0
+    STA map_col
+@bot_col_loop:
+    ; Calculate map index: map_row * 16 + map_col
+    LDA map_row
+    ASL A
+    ASL A
+    ASL A
+    ASL A           ; A = map_row * 16
+    CLC
+    ADC map_col     ; A = map_row * 16 + map_col
+    TAX
+    LDA game_map, x ; Get metatile type
+    BNE @bot_wall
+    ; Floor bottom-half
+    LDA #$03        ; Floor BL
+    STA $2007
+    LDA #$04        ; Floor BR
+    STA $2007
+    JMP @bot_next
+@bot_wall:
+    LDA #$07        ; Wall BL
+    STA $2007
+    LDA #$08        ; Wall BR
+    STA $2007
+@bot_next:
+    INC map_col
+    LDA map_col
+    CMP #16
+    BNE @bot_col_loop
+
+    INC map_row
+    LDA map_row
+    CMP #15
+    BNE @row_loop
+    RTS
+
+DrawAttributes:
+    ; Set PPU address to $23C0
+    LDA $2002
+    LDA #$23
+    STA $2006
+    LDA #$C0
+    STA $2006
+
+    LDA #0
+    STA map_row     ; ar (0..7)
+@ar_loop:
+    LDA #0
+    STA map_col     ; ac (0..7)
+@ac_loop:
+    ; Calculate offset: ar * 32 + ac * 2
+    LDA map_row
+    ASL A           ; ar * 2
+    ASL A           ; ar * 4
+    ASL A           ; ar * 8
+    ASL A           ; ar * 16
+    ASL A           ; ar * 32
+    STA tile_temp   ; tile_temp = ar * 32
+
+    LDA map_col
+    ASL A           ; ac * 2
+    CLC
+    ADC tile_temp   ; A = ar * 32 + ac * 2
+    TAX             ; X is the map index for TL
+
+    ; 1. TL
+    LDA game_map, x
+    STA tile_temp   ; tile_temp = TL palette (0 or 1)
+
+    ; 2. TR
+    LDA game_map+1, x
+    ASL A
+    ASL A           ; Shift left by 2
+    ORA tile_temp
+    STA tile_temp   ; tile_temp = (TR << 2) | TL
+
+    ; 3. BL and BR
+    LDA map_row
+    CMP #7          ; Is it the last attribute row?
+    BNE @read_bl_br
+    ; If ar == 7, BL and BR are floor (0)
+    JMP @write_attr
+
+@read_bl_br:
+    ; BL index is X + 16
+    LDA game_map+16, x
+    ASL A
+    ASL A
+    ASL A
+    ASL A           ; Shift left by 4
+    ORA tile_temp
+    STA tile_temp
+
+    ; BR index is X + 17
+    LDA game_map+17, x
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    ASL A
+    ASL A           ; Shift left by 6
+    ORA tile_temp
+    STA tile_temp
+
+@write_attr:
+    LDA tile_temp
+    STA $2007
+
+    INC map_col
+    LDA map_col
+    CMP #8
+    BNE @ac_loop
+
+    INC map_row
+    LDA map_row
+    CMP #8
+    BNE @ar_loop
+    RTS
+
+CheckPointCollision:
+    ; Check if point_y is out of bounds
+    LDA point_y
+    CMP #240
+    BCS @collision
+
+    LSR A
+    LSR A
+    LSR A
+    LSR A           ; A = row (0..14)
+    ASL A
+    ASL A
+    ASL A
+    ASL A           ; A = row * 16
+    STA tile_temp
+
+    LDA point_x
+    LSR A
+    LSR A
+    LSR A
+    LSR A           ; A = col (0..15)
+    CLC
+    ADC tile_temp   ; A = row * 16 + col
+    TAX
+    LDA game_map, x
+    BEQ @no_collision
+
+@collision:
+    LDA #1
+    RTS
+@no_collision:
+    LDA #0
+    RTS
+
+CheckSpriteCollision:
+    ; Calculate X_start
+    LDA col_x
+    CLC
+    ADC col_box_x
+    STA point_x     ; point_x = X_start
+
+    ; Calculate Y_start
+    LDA col_y
+    CLC
+    ADC col_box_y
+    STA point_y     ; point_y = Y_start
+
+    ; Corner 1: Top-Left (X_start, Y_start)
+    JSR CheckPointCollision
+    BNE @collision_found
+
+    ; Corner 2: Top-Right (X_end, Y_start)
+    LDA point_x
+    CLC
+    ADC col_box_w
+    STA point_x
+    JSR CheckPointCollision
+    BNE @collision_found
+
+    ; Corner 3: Bottom-Right (X_end, Y_end)
+    LDA col_y
+    CLC
+    ADC col_box_y
+    CLC
+    ADC col_box_h
+    STA point_y
+    JSR CheckPointCollision
+    BNE @collision_found
+
+    ; Corner 4: Bottom-Left (X_start, Y_end)
+    LDA col_x
+    CLC
+    ADC col_box_x
+    STA point_x
+    ; point_y is already Y_end
+    JSR CheckPointCollision
+    BNE @collision_found
+
+    ; No collision
+    LDA #0
+    RTS
+
+@collision_found:
+    LDA #1
+    RTS
+
+
 NMI: 
     ; OAM DMA
     LDA #$00
     STA $2003
     LDA #$02
     STA $4014
+
+    ; Reset Scroll
+    LDA $2002
+    LDA #$00
+    STA $2005
+    STA $2005
 
     ; Set NMI Ready
     LDA #$01
@@ -275,6 +776,37 @@ IRQ:
 title_chr: .incbin "title.chr"
 title_nam: .incbin "title.nam"
 title_pal: .incbin "title.pal"
+player_chr: .incbin "player.chr"
+player_pal: .incbin "player.pal"
+bg_tiles: .incbin "bg_tiles.chr"
+
+game_bg_pal:
+    ; Palette 0: Wooden Floor
+    .byte $0F, $07, $17, $27
+    ; Palette 1: Tile Wall (brick / stone wall)
+    .byte $0F, $02, $12, $22 ; Blue/gray stone wall
+    ; Palette 2: Unused
+    .byte $0F, $00, $10, $30
+    ; Palette 3: Unused
+    .byte $0F, $0F, $0F, $0F
+
+game_map:
+    ; 15 rows of 16 metatiles. 0 = Wooden floor (passable), 1 = Tile wall (impassable)
+    .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
+    .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+    .byte 1,0,1,1,0,0,1,1,1,1,0,0,1,1,0,1
+    .byte 1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1
+    .byte 1,0,0,0,0,1,1,0,0,1,1,0,0,0,0,1
+    .byte 1,0,0,0,0,1,1,0,0,1,1,0,0,0,0,1
+    .byte 1,0,1,1,0,0,0,0,0,0,0,0,1,1,0,1
+    .byte 1,0,1,1,0,1,1,1,1,1,1,0,1,1,0,1
+    .byte 1,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1
+    .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+    .byte 1,0,1,1,0,0,1,1,1,1,0,0,1,1,0,1
+    .byte 1,0,1,1,0,0,1,1,1,1,0,0,1,1,0,1
+    .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+    .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
+    .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 
 ; =====================
 ; VECTORS
