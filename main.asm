@@ -25,6 +25,9 @@ col_box_w: .res 1
 col_box_h: .res 1
 point_x: .res 1
 point_y: .res 1
+player_dir: .res 1
+music_ptr: .res 2
+music_wait: .res 1
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -65,6 +68,8 @@ ClearOAM:
     LDA #128
     STA sprite_x
     STA sprite_y
+    LDA #0
+    STA player_dir
     
     ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
     LDX #$00        ; OAM Index
@@ -92,6 +97,18 @@ StorePal:
     INY
     CPY #24
     BNE InitPlayerSpritesLoop
+
+    ; --- APU Frame Counter IRQ Setup ---
+    LDA #$0F
+    STA $4015       ; Enable Sq1, Sq2, Tri, Noise
+    LDA #$00
+    STA $4017       ; 4-step sequence, IRQ enabled
+    STA music_wait  ; music_wait = 0
+    LDA #<music_seq
+    STA music_ptr
+    LDA #>music_seq
+    STA music_ptr+1
+    CLI             ; Enable IRQs
 
     ; --- Setup Game State ---
     LDA #$00
@@ -148,8 +165,8 @@ LoadPlayerCHR:
     LDA #>player_chr
     STA ptr+1
 
-    ; We only need 384 bytes now, crossing the page boundary.
-    LDX #2      ; 2 pages (512 bytes is enough to cover 384)
+    ; We need 768 bytes now (48 tiles) to cover both right and left facing sprites.
+    LDX #3      ; 3 pages (768 bytes)
     LDY #$00
 CopyPlayerCHRLoop:
     LDA (ptr), y
@@ -325,12 +342,16 @@ StateGameplay:
     AND #%00000010      ; Left
     BEQ @not_left
     DEC temp_coord
+    LDA #1
+    STA player_dir      ; Set direction to Left (1)
     JMP @do_x_check
 @not_left:
     LDA buttons1
     AND #%00000001      ; Right
     BEQ @no_x_move
     INC temp_coord
+    LDA #0
+    STA player_dir      ; Set direction to Right (0)
 
 @do_x_check:
     ; Setup collision parameters for X movement
@@ -435,6 +456,18 @@ SetColPos:
     CLC
     ADC sprite_x
     STA OAM_RAM+3, x
+
+    ; --- Set Tile Index ---
+    LDA player_dir
+    BEQ @facing_right
+    TYA
+    CLC
+    ADC #24
+    JMP @store_tile
+@facing_right:
+    TYA
+@store_tile:
+    STA OAM_RAM+1, x
 
     ; Increment
     INX
@@ -767,12 +800,144 @@ NMI:
     RTI
 
 IRQ:
-   RTI
+    PHA
+    TXA
+    PHA
+    TYA
+    PHA
+
+    ; Acknowledge APU Frame Counter IRQ
+    LDA $4015
+
+    ; Decrement wait timer
+    LDA music_wait
+    BEQ _read_next
+    DEC music_wait
+    JMP _end_irq
+
+_read_next:
+    LDY #0
+    LDA (music_ptr), Y
+    BNE _process_frame
+    ; If duration is 0, loop back to start
+    LDA #<music_seq
+    STA music_ptr
+    LDA #>music_seq
+    STA music_ptr+1
+    LDA (music_ptr), Y
+
+_process_frame:
+    ; A has duration
+    STA music_wait
+
+    ; Melody (Square 1)
+    INY
+    LDA (music_ptr), Y
+    BEQ _skip_sq1       ; If note 0, rest
+    TAX
+    LDA #$8F            ; Duty 10, volume 15
+    STA $4000
+    LDA note_periods_lo, X
+    STA $4002
+    LDA note_periods_hi, X
+    STA $4003
+    JMP _do_tri
+_skip_sq1:
+    LDA #$30            ; Volume 0, halt length counter
+    STA $4000
+
+_do_tri:
+    ; Bass (Triangle)
+    INY
+    LDA (music_ptr), Y
+    BEQ _skip_tri
+    TAX
+    LDA #$FF            ; Triangle linear counter max
+    STA $4008
+    LDA note_periods_lo, X
+    STA $400A
+    LDA note_periods_hi, X
+    STA $400B
+    JMP _do_noise
+_skip_tri:
+    LDA #$00
+    STA $4008
+
+_do_noise:
+    ; Drum (Noise)
+    INY
+    LDA (music_ptr), Y
+    BEQ _skip_noise
+    TAX
+    LDA #$0F            ; Noise volume 15
+    STA $400C
+    LDA noise_periods, X
+    STA $400E
+    LDA #$08            ; Length counter
+    STA $400F
+    JMP _advance
+_skip_noise:
+    LDA #$30
+    STA $400C
+
+_advance:
+    ; Advance ptr by 4
+    CLC
+    LDA music_ptr
+    ADC #4
+    STA music_ptr
+    BCC _end_irq
+    INC music_ptr+1
+
+_end_irq:
+    PLA
+    TAY
+    PLA
+    TAX
+    PLA
+    RTI
 
 ; =====================
 ; DATA
 ; =====================
 .segment "RODATA"
+
+note_periods_lo:
+    .byte 0    ; 0: Rest
+    ; C3 to B3
+    .byte $56, $F9, $A6, $80, $3A, $FC, $C4
+    ; C4 to B4
+    .byte $AA, $7C, $52, $3F, $1C, $FD, $E1
+
+note_periods_hi:
+    .byte 0
+    ; C3 to B3
+    .byte $03, $02, $02, $02, $02, $01, $01
+    ; C4 to B4
+    .byte $01, $01, $01, $01, $01, $00, $00
+
+noise_periods:
+    .byte 0      ; 0: Rest
+    .byte $04    ; 1: Kick / Low snare
+    .byte $0C    ; 2: Hi-hat
+    .byte $08    ; 3: Snare
+
+music_seq:
+    ; Dur, Sq1, Tri, Noise
+    ; Measure 1
+    .byte 15, 8, 1, 1    ; C4, C3, Kick
+    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
+    .byte 15, 10, 1, 3   ; E4, C3, Snare
+    .byte 15, 12, 1, 2   ; G4, C3, Hihat
+
+    ; Measure 2
+    .byte 15, 11, 4, 1   ; F4, F3, Kick
+    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
+    .byte 15, 13, 4, 3   ; A4, F3, Snare
+    .byte 15, 12, 4, 2   ; G4, F3, Hihat
+
+    .byte 0              ; Loop
+
 title_chr: .incbin "title.chr"
 title_nam: .incbin "title.nam"
 title_pal: .incbin "title.pal"
