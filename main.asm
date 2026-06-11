@@ -103,11 +103,8 @@ StorePal:
     STA $4015       ; Enable Sq1, Sq2, Tri, Noise
     LDA #$00
     STA $4017       ; 4-step sequence, IRQ enabled
-    STA music_wait  ; music_wait = 0
-    LDA #<music_seq
-    STA music_ptr
-    LDA #>music_seq
-    STA music_ptr+1
+    LDA #1          ; Title screen song
+    JSR PlaySong
     CLI             ; Enable IRQs
 
     ; --- Setup Game State ---
@@ -236,6 +233,9 @@ StateTitle:
     JMP DoneInput       ; Out of bounds branch fixed
 StartPressed:
     INC game_state      ; Transition to StateGameplay
+
+    LDA #2              ; Play gameplay song
+    JSR PlaySong
 
     ; --- CLEAR SCREEN FOR GAMEPLAY ---
     ; Turn off NMI and rendering to safely clear memory and draw
@@ -477,6 +477,48 @@ SetColPos:
     INY
     CPY #24         ; Ensure we update all 24 sprites
     BNE UpdateGridLoop
+    RTS
+
+PlaySong:
+    PHA             ; Save song ID
+    SEI             ; Disable interrupts to prevent race condition on music_ptr
+    PLA
+    CMP #0
+    BNE @check_title
+    ; Silence song
+    LDA #<silence_seq
+    STA music_ptr
+    LDA #>silence_seq
+    STA music_ptr+1
+    JMP @done
+
+@check_title:
+    CMP #1
+    BNE @check_gameplay
+    LDA #<title_music_seq
+    STA music_ptr
+    LDA #>title_music_seq
+    STA music_ptr+1
+    JMP @done
+
+@check_gameplay:
+    LDA #<music_seq
+    STA music_ptr
+    LDA #>music_seq
+    STA music_ptr+1
+
+@done:
+    LDA #0
+    STA music_wait      ; Start immediately
+    ; Silence channels to prevent hanging notes
+    LDA #$30
+    STA $4000           ; Silence Square 1
+    STA $4004           ; Silence Square 2
+    LDA #$00
+    STA $4008           ; Silence Triangle
+    STA $400C           ; Silence Noise
+
+    CLI                 ; Re-enable interrupts
     RTS
 
 ReadController1:
@@ -908,6 +950,8 @@ note_periods_lo:
     .byte $56, $F9, $A6, $80, $3A, $FC, $C4
     ; C4 to B4
     .byte $AA, $7C, $52, $3F, $1C, $FD, $E1
+    ; C5 to B5
+    .byte $D4, $BD, $A8, $9F, $8D, $7E, $70
 
 note_periods_hi:
     .byte 0
@@ -915,12 +959,46 @@ note_periods_hi:
     .byte $03, $02, $02, $02, $02, $01, $01
     ; C4 to B4
     .byte $01, $01, $01, $01, $01, $00, $00
+    ; C5 to B5
+    .byte $00, $00, $00, $00, $00, $00, $00
 
 noise_periods:
     .byte 0      ; 0: Rest
     .byte $04    ; 1: Kick / Low snare
     .byte $0C    ; 2: Hi-hat
     .byte $08    ; 3: Snare
+
+silence_seq:
+    .byte 255, 0, 0, 0
+    .byte 0
+
+title_music_seq:
+    ; Dur, Sq1, Tri, Noise
+    ; Measure 1: F Major
+    .byte 12, 13, 4, 1   ; A4, F3, Kick
+    .byte 12, 15, 4, 2   ; C5, F3, Hihat
+    .byte 12, 18, 4, 3   ; F5, F3, Snare
+    .byte 12, 15, 4, 2   ; C5, F3, Hihat
+
+    ; Measure 2: G Major
+    .byte 12, 14, 5, 1   ; B4, G3, Kick
+    .byte 12, 16, 5, 2   ; D5, G3, Hihat
+    .byte 12, 19, 5, 3   ; G5, G3, Snare
+    .byte 12, 16, 5, 2   ; D5, G3, Hihat
+
+    ; Measure 3: E Minor
+    .byte 12, 12, 3, 1   ; G4, E3, Kick
+    .byte 12, 14, 3, 2   ; B4, E3, Hihat
+    .byte 12, 17, 3, 3   ; E5, E3, Snare
+    .byte 12, 14, 3, 2   ; B4, E3, Hihat
+
+    ; Measure 4: A Minor
+    .byte 12, 15, 6, 1   ; C5, A3, Kick
+    .byte 12, 17, 6, 2   ; E5, A3, Hihat
+    .byte 12, 20, 6, 3   ; A5, A3, Snare
+    .byte 12, 17, 6, 2   ; E5, A3, Hihat
+
+    .byte 0              ; Loop
 
 music_seq:
     ; Dur, Sq1, Tri, Noise
