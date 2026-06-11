@@ -34,6 +34,9 @@ slime_y: .res 1
 slime_dir_x: .res 1
 slime_dir_y: .res 1
 frame_counter: .res 1
+sq1_note: .res 1
+tri_note: .res 1
+noise_note: .res 1
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -675,6 +678,9 @@ PlaySong:
 @done:
     LDA #0
     STA music_wait      ; Start immediately
+    STA sq1_note
+    STA tri_note
+    STA noise_note
     ; Silence channels to prevent hanging notes
     LDA #$30
     STA $4000           ; Silence Square 1
@@ -1016,16 +1022,14 @@ IRQ:
     ; Acknowledge APU Frame Counter IRQ
     LDA $4015
 
-    ; Decrement wait timer
+    ; Check wait timer
     LDA music_wait
-    BEQ _read_next
-    DEC music_wait
-    JMP _end_irq
-
+    BNE _do_effects
+    
 _read_next:
     LDY #0
     LDA (music_ptr), Y
-    BNE _process_frame
+    BNE _process_fetch
     ; If duration is 0, loop back to start
     LDA music_start_ptr
     STA music_ptr
@@ -1033,68 +1037,109 @@ _read_next:
     STA music_ptr+1
     LDA (music_ptr), Y
 
-_process_frame:
+_process_fetch:
     ; A has duration
     STA music_wait
 
-    ; Melody (Square 1)
+    ; Fetch Melody (Square 1)
     INY
     LDA (music_ptr), Y
-    BEQ _skip_sq1       ; If note 0, rest
+    STA sq1_note
+    AND #$3F
+    BEQ @skip_sq1_init
     TAX
-    LDA #$8F            ; Duty 10, volume 15
-    STA $4000
-    LDA note_periods_lo, X
-    STA $4002
     LDA note_periods_hi, X
     STA $4003
-    JMP _do_tri
-_skip_sq1:
-    LDA #$30            ; Volume 0, halt length counter
-    STA $4000
+@skip_sq1_init:
 
-_do_tri:
-    ; Bass (Triangle)
+    ; Fetch Bass (Triangle)
     INY
     LDA (music_ptr), Y
-    BEQ _skip_tri
+    STA tri_note
+    BEQ @skip_tri_init
     TAX
-    LDA #$FF            ; Triangle linear counter max
-    STA $4008
-    LDA note_periods_lo, X
-    STA $400A
     LDA note_periods_hi, X
     STA $400B
-    JMP _do_noise
-_skip_tri:
-    LDA #$00
-    STA $4008
+@skip_tri_init:
 
-_do_noise:
-    ; Drum (Noise)
+    ; Fetch Drum (Noise)
     INY
     LDA (music_ptr), Y
-    BEQ _skip_noise
+    STA noise_note
+    BEQ @skip_noise_init
     TAX
-    LDA #$0F            ; Noise volume 15
+    LDA #$05            ; envelope decay rate 5 (crisp hit)
     STA $400C
     LDA noise_periods, X
     STA $400E
-    LDA #$08            ; Length counter
+    LDA #$08            ; length counter
     STA $400F
-    JMP _advance
-_skip_noise:
-    LDA #$30
-    STA $400C
+@skip_noise_init:
 
-_advance:
     ; Advance ptr by 4
     CLC
     LDA music_ptr
     ADC #4
     STA music_ptr
-    BCC _end_irq
+    BCC _do_effects
     INC music_ptr+1
+
+_do_effects:
+    DEC music_wait
+
+    ; --- Square 1 (Melody) ---
+    LDA sq1_note
+    AND #$3F
+    BEQ _skip_sq1
+    TAX
+    
+    ; Duty Cycle Flip Effect
+    LDA sq1_note
+    AND #$80
+    BEQ @no_duty_flip
+    LDA frame_counter
+    AND #$04
+    BNE @duty1
+@no_duty_flip:
+    LDA #$BF            ; Duty 50%, volume 15
+    JMP @set_duty
+@duty1:
+    LDA #$7F            ; Duty 25%, volume 15
+@set_duty:
+    STA $4000
+    
+    ; Vibrato Effect
+    LDA note_periods_lo, X
+    STA tile_temp
+    
+    LDA sq1_note
+    AND #$40
+    BEQ @no_vibrato
+    LDA frame_counter
+    AND #$02
+    BEQ @no_vibrato
+    INC tile_temp       ; Add 1 to pitch period
+@no_vibrato:
+    LDA tile_temp
+    STA $4002
+    JMP _do_tri
+_skip_sq1:
+    LDA #$30
+    STA $4000
+
+_do_tri:
+    ; --- Triangle (Bass) ---
+    LDA tri_note
+    BEQ _skip_tri
+    TAX
+    LDA #$FF
+    STA $4008
+    LDA note_periods_lo, X
+    STA $400A
+    JMP _end_irq
+_skip_tri:
+    LDA #$00
+    STA $4008
 
 _end_irq:
     PLA
@@ -1138,58 +1183,91 @@ silence_seq:
     .byte 0
 
 title_music_seq:
-    ; Dur, Sq1, Tri, Noise
-    ; Measure 1: F Major
-    .byte 12, 13, 4, 1   ; A4, F3, Kick
-    .byte 12, 15, 4, 2   ; C5, F3, Hihat
-    .byte 12, 18, 4, 3   ; F5, F3, Snare
-    .byte 12, 15, 4, 2   ; C5, F3, Hihat
+    ; A driving F Major - G Major - E Minor - A Minor arpeggio sequence
+    ; Tempo: 6 frames per step
+    
+    ; Measure 1: F Major (F A C)
+    .byte 6, 203, 4, 1   ; F4, F3, Kick
+    .byte 6, 205, 0, 2   ; A4, Rest, Hihat
+    .byte 6, 207, 0, 3   ; C5, Rest, Snare
+    .byte 6, 210, 0, 2   ; F5, Rest, Hihat
+    .byte 6, 207, 4, 1   ; C5, F3, Kick
+    .byte 6, 205, 0, 2   ; A4, Rest, Hihat
+    .byte 6, 210, 0, 3   ; F5, Rest, Snare
+    .byte 6, 212, 0, 2   ; A5, Rest, Hihat
 
-    ; Measure 2: G Major
-    .byte 12, 14, 5, 1   ; B4, G3, Kick
-    .byte 12, 16, 5, 2   ; D5, G3, Hihat
-    .byte 12, 19, 5, 3   ; G5, G3, Snare
-    .byte 12, 16, 5, 2   ; D5, G3, Hihat
+    ; Measure 2: G Major (G B D)
+    .byte 6, 204, 5, 1   ; G4, G3, Kick
+    .byte 6, 206, 0, 2   ; B4, Rest, Hihat
+    .byte 6, 208, 0, 3   ; D5, Rest, Snare
+    .byte 6, 211, 0, 2   ; G5, Rest, Hihat
+    .byte 6, 208, 5, 1   ; D5, G3, Kick
+    .byte 6, 206, 0, 2   ; B4, Rest, Hihat
+    .byte 6, 211, 0, 3   ; G5, Rest, Snare
+    .byte 6, 213, 0, 2   ; B5, Rest, Hihat
 
-    ; Measure 3: E Minor
-    .byte 12, 12, 3, 1   ; G4, E3, Kick
-    .byte 12, 14, 3, 2   ; B4, E3, Hihat
-    .byte 12, 17, 3, 3   ; E5, E3, Snare
-    .byte 12, 14, 3, 2   ; B4, E3, Hihat
+    ; Measure 3: E Minor (E G B)
+    .byte 6, 202, 3, 1   ; E4, E3, Kick
+    .byte 6, 204, 0, 2   ; G4, Rest, Hihat
+    .byte 6, 206, 0, 3   ; B4, Rest, Snare
+    .byte 6, 209, 0, 2   ; E5, Rest, Hihat
+    .byte 6, 206, 3, 1   ; B4, E3, Kick
+    .byte 6, 204, 0, 2   ; G4, Rest, Hihat
+    .byte 6, 209, 0, 3   ; E5, Rest, Snare
+    .byte 6, 211, 0, 2   ; G5, Rest, Hihat
 
-    ; Measure 4: A Minor
-    .byte 12, 15, 6, 1   ; C5, A3, Kick
-    .byte 12, 17, 6, 2   ; E5, A3, Hihat
-    .byte 12, 20, 6, 3   ; A5, A3, Snare
-    .byte 12, 17, 6, 2   ; E5, A3, Hihat
-
+    ; Measure 4: A Minor (A C E)
+    .byte 6, 205, 6, 1   ; A4, A3, Kick
+    .byte 6, 207, 0, 2   ; C5, Rest, Hihat
+    .byte 6, 209, 0, 3   ; E5, Rest, Snare
+    .byte 6, 212, 0, 2   ; A5, Rest, Hihat
+    .byte 6, 209, 6, 1   ; E5, A3, Kick
+    .byte 6, 207, 0, 2   ; C5, Rest, Hihat
+    .byte 6, 212, 0, 3   ; A5, Rest, Snare
+    .byte 6, 212, 0, 2   ; A5, Rest, Hihat
     .byte 0              ; Loop
 
 music_seq:
-    ; Dur, Sq1, Tri, Noise
-    ; Measure 1: C Major (C - E - G)
-    .byte 15, 8, 1, 1    ; C4, C3, Kick
-    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
-    .byte 15, 10, 1, 3   ; E4, C3, Snare
-    .byte 15, 12, 1, 2   ; G4, C3, Hihat
+    ; Slower driving bass for gameplay
+    ; Measure 1: C Major (C E G)
+    .byte 6, 143, 1, 1    ; C5, C3, Kick
+    .byte 6, 143, 1, 2    ; C5, C3, Hihat
+    .byte 6, 143, 8, 3    ; C5, C4, Snare (octave jump bass!)
+    .byte 6, 143, 1, 2    ; C5, C3, Hihat
+    .byte 6, 140, 1, 1    ; G4, C3, Kick
+    .byte 6, 140, 1, 2    ; G4, C3, Hihat
+    .byte 6, 140, 8, 3    ; G4, C4, Snare
+    .byte 6, 140, 1, 2    ; G4, C3, Hihat
 
-    ; Measure 2: G Major (G - B - D)
-    .byte 15, 12, 5, 1   ; G4, G3, Kick
-    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
-    .byte 15, 9, 5, 3    ; D4, G3, Snare
-    .byte 15, 14, 5, 2   ; B4, G3, Hihat
+    ; Measure 2: G Major (G B D)
+    .byte 6, 142, 5, 1    ; B4, G3, Kick
+    .byte 6, 142, 5, 2    ; B4, G3, Hihat
+    .byte 6, 142, 12, 3   ; B4, G4, Snare
+    .byte 6, 142, 5, 2    ; B4, G3, Hihat
+    .byte 6, 140, 5, 1    ; G4, G3, Kick
+    .byte 6, 140, 5, 2    ; G4, G3, Hihat
+    .byte 6, 140, 12, 3   ; G4, G4, Snare
+    .byte 6, 140, 5, 2    ; G4, G3, Hihat
 
-    ; Measure 3: A Minor (A - C - E)
-    .byte 15, 13, 6, 1   ; A4, A3, Kick
-    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
-    .byte 15, 8, 6, 3    ; C4, A3, Snare
-    .byte 15, 10, 6, 2   ; E4, A3, Hihat
-
-    ; Measure 4: F Major (F - A - C)
-    .byte 15, 11, 4, 1   ; F4, F3, Kick
-    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
-    .byte 15, 13, 4, 3   ; A4, F3, Snare
-    .byte 15, 8, 4, 2    ; C4, F3, Hihat
+    ; Measure 3: F Major
+    .byte 6, 141, 4, 1    ; A4, F3, Kick
+    .byte 6, 141, 4, 2    ; A4, F3, Hihat
+    .byte 6, 141, 11, 3   ; A4, F4, Snare
+    .byte 6, 141, 4, 2    ; A4, F3, Hihat
+    .byte 6, 139, 4, 1    ; F4, F3, Kick
+    .byte 6, 139, 4, 2    ; F4, F3, Hihat
+    .byte 6, 139, 11, 3   ; F4, F4, Snare
+    .byte 6, 139, 4, 2    ; F4, F3, Hihat
+    
+    ; Measure 4: G Major
+    .byte 6, 142, 5, 1    ; B4, G3, Kick
+    .byte 6, 142, 5, 2    ; B4, G3, Hihat
+    .byte 6, 142, 12, 3   ; B4, G4, Snare
+    .byte 6, 142, 5, 2    ; B4, G3, Hihat
+    .byte 6, 144, 5, 1    ; D5, G3, Kick
+    .byte 6, 144, 5, 2    ; D5, G3, Hihat
+    .byte 6, 144, 12, 3   ; D5, G4, Snare
+    .byte 6, 144, 5, 2    ; D5, G3, Hihat
 
     .byte 0              ; Loop
 
