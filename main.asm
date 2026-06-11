@@ -28,6 +28,7 @@ point_y: .res 1
 player_dir: .res 1
 music_ptr: .res 2
 music_wait: .res 1
+music_start_ptr: .res 2
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -488,8 +489,10 @@ PlaySong:
     ; Silence song
     LDA #<silence_seq
     STA music_ptr
+    STA music_start_ptr
     LDA #>silence_seq
     STA music_ptr+1
+    STA music_start_ptr+1
     JMP @done
 
 @check_title:
@@ -497,15 +500,19 @@ PlaySong:
     BNE @check_gameplay
     LDA #<title_music_seq
     STA music_ptr
+    STA music_start_ptr
     LDA #>title_music_seq
     STA music_ptr+1
+    STA music_start_ptr+1
     JMP @done
 
 @check_gameplay:
     LDA #<music_seq
     STA music_ptr
+    STA music_start_ptr
     LDA #>music_seq
     STA music_ptr+1
+    STA music_start_ptr+1
 
 @done:
     LDA #0
@@ -862,9 +869,9 @@ _read_next:
     LDA (music_ptr), Y
     BNE _process_frame
     ; If duration is 0, loop back to start
-    LDA #<music_seq
+    LDA music_start_ptr
     STA music_ptr
-    LDA #>music_seq
+    LDA music_start_ptr+1
     STA music_ptr+1
     LDA (music_ptr), Y
 
