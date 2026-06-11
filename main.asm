@@ -29,6 +29,11 @@ player_dir: .res 1
 music_ptr: .res 2
 music_wait: .res 1
 music_start_ptr: .res 2
+slime_x: .res 1
+slime_y: .res 1
+slime_dir_x: .res 1
+slime_dir_y: .res 1
+frame_counter: .res 1
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -71,6 +76,15 @@ ClearOAM:
     STA sprite_y
     LDA #0
     STA player_dir
+    
+    LDA #64
+    STA slime_x
+    STA slime_y
+    LDA #1
+    STA slime_dir_x
+    STA slime_dir_y
+    LDA #0
+    STA frame_counter
     
     ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
     LDX #$00        ; OAM Index
@@ -174,6 +188,19 @@ CopyPlayerCHRLoop:
     INC ptr+1
     DEX
     BNE CopyPlayerCHRLoop
+
+    ; Load Slime CHR immediately after player
+    LDA #<slime_chr
+    STA ptr
+    LDA #>slime_chr
+    STA ptr+1
+    LDY #0
+CopySlimeCHRLoop:
+    LDA (ptr), y
+    STA $2007
+    INY
+    CPY #64     ; 4 tiles = 64 bytes
+    BNE CopySlimeCHRLoop
 
 LoadNametable:
     LDA $2002
@@ -284,6 +311,20 @@ StartPressed:
     LDA player_pal+5
     STA $2007
 
+    ; Load 3 slime colors into Sprite Palette 2 ($3F19 - $3F1B)
+    LDA $2002
+    LDA #$3F
+    STA $2006
+    LDA #$19
+    STA $2006
+
+    LDA #$0F        ; Black outline
+    STA $2007
+    LDA #$2A        ; Green
+    STA $2007
+    LDA #$3A        ; Light Green
+    STA $2007
+
     ; Reset Scroll
     LDA $2002
     LDA #$00
@@ -381,6 +422,15 @@ DoneInput:
     BEQ SkipSpriteUpdate
 
     JSR UpdateMetaSprite
+    
+    INC frame_counter
+    LDA frame_counter
+    AND #$01
+    BNE @skip_slime_move
+    JSR UpdateSlime
+@skip_slime_move:
+    JSR DrawSlime
+
 SkipSpriteUpdate:
 
     JMP FOREVER
@@ -478,6 +528,114 @@ SetColPos:
     INY
     CPY #24         ; Ensure we update all 24 sprites
     BNE UpdateGridLoop
+    RTS
+
+UpdateSlime:
+    ; --- X Movement ---
+    LDA slime_x
+    CLC
+    ADC slime_dir_x
+    STA temp_coord
+
+    LDA temp_coord
+    STA col_x
+    LDA slime_y
+    STA col_y
+    LDA #2
+    STA col_box_x
+    STA col_box_y
+    LDA #12
+    STA col_box_w
+    STA col_box_h
+
+    JSR CheckSpriteCollision
+    BNE @hit_wall_x
+    LDA temp_coord
+    STA slime_x
+    JMP @done_x
+@hit_wall_x:
+    LDA slime_dir_x
+    EOR #$FE
+    STA slime_dir_x
+@done_x:
+
+    ; --- Y Movement ---
+    LDA slime_y
+    CLC
+    ADC slime_dir_y
+    STA temp_coord
+
+    LDA slime_x
+    STA col_x
+    LDA temp_coord
+    STA col_y
+    LDA #2
+    STA col_box_x
+    STA col_box_y
+    LDA #12
+    STA col_box_w
+    STA col_box_h
+
+    JSR CheckSpriteCollision
+    BNE @hit_wall_y
+    LDA temp_coord
+    STA slime_y
+    JMP @done_y
+@hit_wall_y:
+    LDA slime_dir_y
+    EOR #$FE
+    STA slime_dir_y
+@done_y:
+    RTS
+
+DrawSlime:
+    ; Sprite 1 (Top Left)
+    LDA slime_y
+    STA OAM_RAM+96
+    LDA #$30        ; Tile 48
+    STA OAM_RAM+97
+    LDA #$02        ; Palette 2
+    STA OAM_RAM+98
+    LDA slime_x
+    STA OAM_RAM+99
+
+    ; Sprite 2 (Top Right)
+    LDA slime_y
+    STA OAM_RAM+100
+    LDA #$31        ; Tile 49
+    STA OAM_RAM+101
+    LDA #$02
+    STA OAM_RAM+102
+    LDA slime_x
+    CLC
+    ADC #8
+    STA OAM_RAM+103
+
+    ; Sprite 3 (Bottom Left)
+    LDA slime_y
+    CLC
+    ADC #8
+    STA OAM_RAM+104
+    LDA #$32        ; Tile 50
+    STA OAM_RAM+105
+    LDA #$02
+    STA OAM_RAM+106
+    LDA slime_x
+    STA OAM_RAM+107
+
+    ; Sprite 4 (Bottom Right)
+    LDA slime_y
+    CLC
+    ADC #8
+    STA OAM_RAM+108
+    LDA #$33        ; Tile 51
+    STA OAM_RAM+109
+    LDA #$02
+    STA OAM_RAM+110
+    LDA slime_x
+    CLC
+    ADC #8
+    STA OAM_RAM+111
     RTS
 
 PlaySong:
@@ -1041,6 +1199,7 @@ title_pal: .incbin "title.pal"
 player_chr: .incbin "player.chr"
 player_pal: .incbin "player.pal"
 bg_tiles: .incbin "bg_tiles.chr"
+slime_chr: .incbin "slime.chr"
 
 game_bg_pal:
     ; Palette 0: Wooden Floor
