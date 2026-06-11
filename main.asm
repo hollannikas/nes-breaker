@@ -924,17 +924,29 @@ noise_periods:
 
 music_seq:
     ; Dur, Sq1, Tri, Noise
-    ; Measure 1
+    ; Measure 1: C Major (C - E - G)
     .byte 15, 8, 1, 1    ; C4, C3, Kick
     .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
     .byte 15, 10, 1, 3   ; E4, C3, Snare
     .byte 15, 12, 1, 2   ; G4, C3, Hihat
 
-    ; Measure 2
+    ; Measure 2: G Major (G - B - D)
+    .byte 15, 12, 5, 1   ; G4, G3, Kick
+    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
+    .byte 15, 9, 5, 3    ; D4, G3, Snare
+    .byte 15, 14, 5, 2   ; B4, G3, Hihat
+
+    ; Measure 3: A Minor (A - C - E)
+    .byte 15, 13, 6, 1   ; A4, A3, Kick
+    .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
+    .byte 15, 8, 6, 3    ; C4, A3, Snare
+    .byte 15, 10, 6, 2   ; E4, A3, Hihat
+
+    ; Measure 4: F Major (F - A - C)
     .byte 15, 11, 4, 1   ; F4, F3, Kick
     .byte 15, 0, 0, 2    ; Rest, Rest, Hihat
     .byte 15, 13, 4, 3   ; A4, F3, Snare
-    .byte 15, 12, 4, 2   ; G4, F3, Hihat
+    .byte 15, 8, 4, 2    ; C4, F3, Hihat
 
     .byte 0              ; Loop
 
