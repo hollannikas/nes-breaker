@@ -42,6 +42,8 @@ slime_dir_x: .res 1
 slime_dir_y: .res 1
 frame_counter: .res 1
 sq1_note: .res 1
+sq2_note: .res 1
+dpcm_trig: .res 1
 tri_note: .res 1
 noise_note: .res 1
 player_hp: .res 1
@@ -1704,7 +1706,8 @@ IRQ:
 @process_music:
     ; Check wait timer
     LDA music_wait
-    BNE _do_effects
+    BEQ _read_next
+    JMP _do_effects
     
 _read_next:
     LDY #0
@@ -1721,18 +1724,31 @@ _process_fetch:
     ; A has duration
     STA music_wait
 
-    ; Fetch Melody (Square 1)
+    ; 2: Fetch Sq1 (Melody)
     INY
     LDA (music_ptr), Y
     STA sq1_note
     AND #$3F
+    BEQ @skip_sq1_init
+    CMP #$3F
     BEQ @skip_sq1_init
     TAX
     LDA note_periods_hi, X
     STA $4003
 @skip_sq1_init:
 
-    ; Fetch Bass (Triangle)
+    ; 3: Fetch Sq2 (Harmony)
+    INY
+    LDA (music_ptr), Y
+    STA sq2_note
+    AND #$3F
+    BEQ @skip_sq2_init
+    TAX
+    LDA note_periods_hi, X
+    STA $4007
+@skip_sq2_init:
+
+    ; 4: Fetch Triangle (Bass)
     INY
     LDA (music_ptr), Y
     STA tri_note
@@ -1742,7 +1758,7 @@ _process_fetch:
     STA $400B
 @skip_tri_init:
 
-    ; Fetch Drum (Noise)
+    ; 5: Fetch Noise (Drums)
     INY
     LDA (music_ptr), Y
     STA noise_note
@@ -1754,18 +1770,40 @@ _process_fetch:
 
     LDA noise_note
     TAX
-    LDA #$05            ; envelope decay rate 5 (crisp hit)
+    LDA #$05            ; envelope decay
     STA $400C
     LDA noise_periods, X
     STA $400E
-    LDA #$08            ; length counter
+    LDA #$08            ; length
     STA $400F
 @skip_noise_init:
 
-    ; Advance ptr by 4
+    ; 6: Fetch DPCM
+    INY
+    LDA (music_ptr), Y
+    BEQ @skip_dpcm
+    
+    ; Play DPCM
+    LDA #$0F
+    STA $4010           ; Pitch
+    LDA #<((dpcm_sample - $C000) / 64)
+    STA $4012           ; Sample address
+    LDA #31
+    STA $4013           ; Sample length (31 * 16 + 1 = 497 bytes)
+    
+    ; Trigger
+    LDA $4015
+    AND #$EF            ; disable
+    STA $4015
+    LDA $4015
+    ORA #$10            ; enable dpcm
+    STA $4015
+@skip_dpcm:
+
+    ; Advance ptr by 6
     CLC
     LDA music_ptr
-    ADC #4
+    ADC #6
     STA music_ptr
     BCC _do_effects
     INC music_ptr+1
@@ -1869,105 +1907,273 @@ noise_periods:
     .byte $08    ; 3: Snare
 
 silence_seq:
-    .byte 255, 0, 0, 0
+    .byte 255, 0, 0, 0, 0, 0
     .byte 0
 
 title_music_seq:
-    ; A driving F Major - G Major - E Minor - A Minor arpeggio sequence
-    ; Tempo: 6 frames per step
+    ; Bombastic 5-Channel Theme
+    ; Format: Dur, Sq1, Sq2, Tri, Noise, DPCM
     
-    ; Measure 1: F Major (F A C)
-    .byte 6, 203, 4, 1   ; F4, F3, Kick
-    .byte 6, 205, 0, 2   ; A4, Rest, Hihat
-    .byte 6, 207, 0, 3   ; C5, Rest, Snare
-    .byte 6, 210, 0, 2   ; F5, Rest, Hihat
-    .byte 6, 207, 4, 1   ; C5, F3, Kick
-    .byte 6, 205, 0, 2   ; A4, Rest, Hihat
-    .byte 6, 210, 0, 3   ; F5, Rest, Snare
-    .byte 6, 212, 0, 2   ; A5, Rest, Hihat
+    ; Measure 1: C Major (Epic)
+    .byte 6, 203, 10,  1, 2, 1   ; Sq1:E5 Sq2:E4 Tri:C3 Noise:Hi DPCM:KICK
+    .byte 6,   0,  0,  0, 2, 0   
+    .byte 6, 205, 12,  3, 3, 0   ; Sq1:G5 Sq2:G4 Tri:E3 Noise:Sn
+    .byte 6,   0,  0,  5, 2, 0   
+    .byte 6, 208,  8,  1, 2, 1   ; Sq1:C6 Sq2:C4 Tri:C3 Noise:Hi DPCM:KICK
+    .byte 6, 205, 10,  3, 2, 0   
+    .byte 6, 203,  8,  5, 3, 0   
+    .byte 6, 205, 12,  8, 2, 0   
 
-    ; Measure 2: G Major (G B D)
-    .byte 6, 204, 5, 1   ; G4, G3, Kick
-    .byte 6, 206, 0, 2   ; B4, Rest, Hihat
-    .byte 6, 208, 0, 3   ; D5, Rest, Snare
-    .byte 6, 211, 0, 2   ; G5, Rest, Hihat
-    .byte 6, 208, 5, 1   ; D5, G3, Kick
-    .byte 6, 206, 0, 2   ; B4, Rest, Hihat
-    .byte 6, 211, 0, 3   ; G5, Rest, Snare
-    .byte 6, 213, 0, 2   ; B5, Rest, Hihat
+    ; Measure 2: A Minor
+    .byte 6, 205, 13,  6, 2, 1   ; Sq1:G5 Sq2:A4 Tri:A3
+    .byte 6,   0,  0,  0, 2, 0   
+    .byte 6, 208, 15,  8, 3, 0   
+    .byte 6,   0,  0, 10, 2, 0   
+    .byte 6, 210, 10,  6, 2, 1   
+    .byte 6, 208, 12,  8, 2, 0   
+    .byte 6, 205, 10, 10, 3, 0   
+    .byte 6, 208, 13, 13, 2, 0   
 
-    ; Measure 3: E Minor (E G B)
-    .byte 6, 202, 3, 1   ; E4, E3, Kick
-    .byte 6, 204, 0, 2   ; G4, Rest, Hihat
-    .byte 6, 206, 0, 3   ; B4, Rest, Snare
-    .byte 6, 209, 0, 2   ; E5, Rest, Hihat
-    .byte 6, 206, 3, 1   ; B4, E3, Kick
-    .byte 6, 204, 0, 2   ; G4, Rest, Hihat
-    .byte 6, 209, 0, 3   ; E5, Rest, Snare
-    .byte 6, 211, 0, 2   ; G5, Rest, Hihat
+    ; Measure 3: F Major
+    .byte 6, 203, 11,  4, 2, 1   ; Sq1:E5 Sq2:F4 Tri:F3
+    .byte 6,   0,  0,  0, 2, 0   
+    .byte 6, 205, 13,  6, 3, 0   
+    .byte 6,   0,  0,  8, 2, 0   
+    .byte 6, 208, 11,  4, 2, 1   
+    .byte 6, 205, 13,  6, 2, 0   
+    .byte 6, 203, 11,  8, 3, 0   
+    .byte 6, 205, 13, 11, 2, 0   
 
-    ; Measure 4: A Minor (A C E)
-    .byte 6, 205, 6, 1   ; A4, A3, Kick
-    .byte 6, 207, 0, 2   ; C5, Rest, Hihat
-    .byte 6, 209, 0, 3   ; E5, Rest, Snare
-    .byte 6, 212, 0, 2   ; A5, Rest, Hihat
-    .byte 6, 209, 6, 1   ; E5, A3, Kick
-    .byte 6, 207, 0, 2   ; C5, Rest, Hihat
-    .byte 6, 212, 0, 3   ; A5, Rest, Snare
-    .byte 6, 212, 0, 2   ; A5, Rest, Hihat
+    ; Measure 4: G Major
+    .byte 6, 204, 12,  5, 2, 1   ; Sq1:F5 Sq2:G4 Tri:G3
+    .byte 6, 206, 14,  0, 2, 0   
+    .byte 6, 208, 16,  7, 3, 0   
+    .byte 6, 211, 19,  0, 2, 0   
+    .byte 6, 211, 19,  5, 2, 1   
+    .byte 6,   0,  0,  0, 2, 0   
+    .byte 6, 211, 19,  7, 3, 0   
+    .byte 6,   0,  0,  9, 2, 0   
+
+    ; ===============================
+    ; ITERATION 2: SOARING LEAD MELODY
+    ; ===============================
+    ; Format: Dur, Sq1, Sq2, Tri, Noise, DPCM
+    
+    ; Measure 1: C Major (Epic)
+    .byte 6, 148, 10, 1, 2, 1    ;  Sq1:E5 Sq2:E4 Tri:C3 Noise:Hi DPCM:KICK + LEAD
+    .byte 6, 191, 0, 0, 2, 0
+    .byte 6, 191, 12, 3, 3, 0    ;  Sq1:G5 Sq2:G4 Tri:E3 Noise:Sn + LEAD
+    .byte 6, 191, 0, 5, 2, 0
+    .byte 6, 147, 8, 1, 2, 1     ;  Sq1:C6 Sq2:C4 Tri:C3 Noise:Hi DPCM:KICK + LEAD
+    .byte 6, 191, 10, 3, 2, 0
+    .byte 6, 191, 8, 5, 3, 0
+    .byte 6, 191, 12, 8, 2, 0
+
+    ; Measure 2: A Minor
+    .byte 6, 148, 13, 6, 2, 1    ;  Sq1:G5 Sq2:A4 Tri:A3 + LEAD
+    .byte 6, 191, 0, 0, 2, 0
+    .byte 6, 191, 15, 8, 3, 0
+    .byte 6, 191, 0, 10, 2, 0
+    .byte 6, 145, 10, 6, 2, 1
+    .byte 6, 191, 12, 8, 2, 0
+    .byte 6, 191, 10, 10, 3, 0
+    .byte 6, 191, 13, 13, 2, 0
+
+    ; Measure 3: F Major
+    .byte 6, 146, 11, 4, 2, 1    ;  Sq1:E5 Sq2:F4 Tri:F3 + LEAD
+    .byte 6, 191, 0, 0, 2, 0
+    .byte 6, 191, 13, 6, 3, 0
+    .byte 6, 191, 0, 8, 2, 0
+    .byte 6, 145, 11, 4, 2, 1
+    .byte 6, 191, 13, 6, 2, 0
+    .byte 6, 191, 11, 8, 3, 0
+    .byte 6, 191, 13, 11, 2, 0
+
+    ; Measure 4: G Major
+    .byte 6, 146, 12, 5, 2, 1    ;  Sq1:F5 Sq2:G4 Tri:G3 + LEAD
+    .byte 6, 191, 14, 0, 2, 0
+    .byte 6, 191, 16, 7, 3, 0
+    .byte 6, 191, 19, 0, 2, 0
+    .byte 6, 143, 19, 5, 2, 1
+    .byte 6, 191, 0, 0, 2, 0
+    .byte 6, 191, 19, 7, 3, 0
+    .byte 6, 191, 0, 9, 2, 0
+    
+    
     .byte 0              ; Loop
 
 music_seq:
-    ; Slower driving bass for gameplay
-    ; Measure 1: C Major (C E G)
-    .byte 6, 143, 1, 1    ; C5, C3, Kick
-    .byte 6, 143, 1, 2    ; C5, C3, Hihat
-    .byte 6, 143, 8, 3    ; C5, C4, Snare (octave jump bass!)
-    .byte 6, 143, 1, 2    ; C5, C3, Hihat
-    .byte 6, 140, 1, 1    ; G4, C3, Kick
-    .byte 6, 140, 1, 2    ; G4, C3, Hihat
-    .byte 6, 140, 8, 3    ; G4, C4, Snare
-    .byte 6, 140, 1, 2    ; G4, C3, Hihat
-
-    ; Measure 2: G Major (G B D)
-    .byte 6, 142, 5, 1    ; B4, G3, Kick
-    .byte 6, 142, 5, 2    ; B4, G3, Hihat
-    .byte 6, 142, 12, 3   ; B4, G4, Snare
-    .byte 6, 142, 5, 2    ; B4, G3, Hihat
-    .byte 6, 140, 5, 1    ; G4, G3, Kick
-    .byte 6, 140, 5, 2    ; G4, G3, Hihat
-    .byte 6, 140, 12, 3   ; G4, G4, Snare
-    .byte 6, 140, 5, 2    ; G4, G3, Hihat
-
-    ; Measure 3: F Major
-    .byte 6, 141, 4, 1    ; A4, F3, Kick
-    .byte 6, 141, 4, 2    ; A4, F3, Hihat
-    .byte 6, 141, 11, 3   ; A4, F4, Snare
-    .byte 6, 141, 4, 2    ; A4, F3, Hihat
-    .byte 6, 139, 4, 1    ; F4, F3, Kick
-    .byte 6, 139, 4, 2    ; F4, F3, Hihat
-    .byte 6, 139, 11, 3   ; F4, F4, Snare
-    .byte 6, 139, 4, 2    ; F4, F3, Hihat
+    ; Chipzel style A Minor / F Major / D Minor / E Minor sequence
+    ; 16 beats (64 steps). Fast tempo: 4 frames per step.
+    ; Format: Dur, Sq1, Sq2, Tri, Noise, DPCM
     
-    ; Measure 4: G Major
-    .byte 6, 142, 5, 1    ; B4, G3, Kick
-    .byte 6, 142, 5, 2    ; B4, G3, Hihat
-    .byte 6, 142, 12, 3   ; B4, G4, Snare
-    .byte 6, 142, 5, 2    ; B4, G3, Hihat
-    .byte 6, 144, 5, 1    ; D5, G3, Kick
-    .byte 6, 144, 5, 2    ; D5, G3, Hihat
-    .byte 6, 144, 12, 3   ; D5, G4, Snare
-    .byte 6, 144, 5, 2    ; D5, G3, Hihat
+    ; --- Beat 1-4 (A Minor) ---
+    .byte 4, 141,  6,  6, 1, 1   ; A4, A3, Kick
+    .byte 4,   0, 13, 13, 2, 0   ;  -, A4, Hi
+    .byte 4, 148, 15,  6, 3, 0   ; E5, C5, Snare
+    .byte 4,   0, 13, 13, 2, 0   ;  -, A4, Hi
+    .byte 4, 148,  6,  6, 1, 1   ; E5, A3, Kick
+    .byte 4,   0, 13, 13, 2, 0   
+    .byte 4, 141, 15,  6, 3, 0   ; A4, C5, Snare
+    .byte 4,   0, 13, 13, 2, 0   
+    
+    .byte 4, 145,  6,  6, 1, 1   ; B4, A3, Kick
+    .byte 4, 148, 13, 13, 2, 0   ; E5, A4, Hi
+    .byte 4,   0, 15,  6, 3, 0   ;  -, C5, Snare
+    .byte 4, 141, 13, 13, 2, 0   ; A4, A4, Hi
+    .byte 4, 148,  6,  6, 1, 1   ; E5, A3, Kick
+    .byte 4, 145, 13, 13, 2, 0   ; B4, A4, Hi
+    .byte 4, 141, 15,  6, 3, 0   ; A4, C5, Snare
+    .byte 4,   0, 13, 13, 2, 0   
+
+    ; --- Beat 5-8 (F Major) ---
+    .byte 4, 139,  4,  4, 1, 1   ; F4, F3, Kick
+    .byte 4,   0, 11, 11, 2, 0   ;  -, F4, Hi
+    .byte 4, 146, 15,  4, 3, 0   ; C5, C5, Snare
+    .byte 4,   0, 11, 11, 2, 0   
+    .byte 4, 146,  4,  4, 1, 1   ; C5, F3, Kick
+    .byte 4,   0, 11, 11, 2, 0   
+    .byte 4, 139, 15,  4, 3, 0   ; F4, C5, Snare
+    .byte 4,   0, 11, 11, 2, 0   
+
+    .byte 4, 143,  4,  4, 1, 1   ; G4, F3, Kick
+    .byte 4, 146, 11, 11, 2, 0   ; C5, F4, Hi
+    .byte 4,   0, 15,  4, 3, 0   ;  -, C5, Snare
+    .byte 4, 139, 11, 11, 2, 0   ; F4, F4, Hi
+    .byte 4, 146,  4,  4, 1, 1   ; C5, F3, Kick
+    .byte 4, 143, 11, 11, 2, 0   ; G4, F4, Hi
+    .byte 4, 139, 15,  4, 3, 0   ; F4, C5, Snare
+    .byte 4,   0, 11, 11, 2, 0   
+
+    ; --- Beat 9-12 (D Minor) ---
+    .byte 4, 137,  2,  2, 1, 1   ; D4, D3, Kick
+    .byte 4,   0,  9,  9, 2, 0   ;  -, D4, Hi
+    .byte 4, 141, 13,  2, 3, 0   ; A4, A4, Snare
+    .byte 4,   0,  9,  9, 2, 0   
+    .byte 4, 141,  2,  2, 1, 1   ; A4, D3, Kick
+    .byte 4,   0,  9,  9, 2, 0   
+    .byte 4, 137, 13,  2, 3, 0   ; D4, A4, Snare
+    .byte 4,   0,  9,  9, 2, 0   
+
+    .byte 4, 139,  2,  2, 1, 1   ; E4, D3, Kick
+    .byte 4, 141,  9,  9, 2, 0   ; A4, D4, Hi
+    .byte 4,   0, 13,  2, 3, 0   ;  -, A4, Snare
+    .byte 4, 137,  9,  9, 2, 0   ; D4, D4, Hi
+    .byte 4, 141,  2,  2, 1, 1   ; A4, D3, Kick
+    .byte 4, 139,  9,  9, 2, 0   ; E4, D4, Hi
+    .byte 4, 137, 13,  2, 3, 0   ; D4, A4, Snare
+    .byte 4,   0,  9,  9, 2, 0   
+
+    ; --- Beat 13-16 (E Minor) ---
+    .byte 4, 138,  3,  3, 1, 1   ; E4, E3, Kick
+    .byte 4,   0, 10, 10, 2, 0   ;  -, E4, Hi
+    .byte 4, 142, 14,  3, 3, 0   ; B4, B4, Snare
+    .byte 4,   0, 10, 10, 2, 0   
+    .byte 4, 142,  3,  3, 1, 1   ; B4, E3, Kick
+    .byte 4,   0, 10, 10, 2, 0   
+    .byte 4, 138, 14,  3, 3, 0   ; E4, B4, Snare
+    .byte 4,   0, 10, 10, 2, 0   
+
+    .byte 4, 140,  3,  3, 1, 1   ; F4 (passing), E3, Kick
+    .byte 4, 142, 10, 10, 2, 0   ; B4, E4, Hi
+    .byte 4,   0, 14,  3, 3, 0   ;  -, B4, Snare
+    .byte 4, 138, 10, 10, 2, 0   ; E4, E4, Hi
+    .byte 4, 142,  3,  3, 1, 1   ; B4, E3, Kick
+    .byte 4, 140, 10, 10, 2, 0   ; F4, E4, Hi
+    .byte 4, 138, 14,  3, 3, 0   ; E4, B4, Snare
+    .byte 4,   0, 10, 10, 2, 0   
+
+    ; ===============================
+    ; ITERATION 2: SOARING LEAD MELODY
+    ; Same rhythm section, but Sq1 plays a high singing melody
+    ; ===============================
+
+    ; --- Beat 1-4 (A Minor) - Lead: A5 -> E5 ---
+    .byte 4, 148,  6,  6, 1, 1   ; A5, A3, Kick
+    .byte 4, 191, 13, 13, 2, 0   ; (tie), A4, Hi
+    .byte 4, 191, 15,  6, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 13, 13, 2, 0   ; (tie), A4, Hi
+    .byte 4, 191,  6,  6, 1, 1   ; (tie), A3, Kick
+    .byte 4, 191, 13, 13, 2, 0   
+    .byte 4, 191, 15,  6, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 13, 13, 2, 0   
+    
+    .byte 4, 145,  6,  6, 1, 1   ; E5, A3, Kick
+    .byte 4, 191, 13, 13, 2, 0   ; (tie), A4, Hi
+    .byte 4, 191, 15,  6, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 13, 13, 2, 0   ; (tie), A4, Hi
+    .byte 4, 148,  6,  6, 1, 1   ; A5, A3, Kick
+    .byte 4, 191, 13, 13, 2, 0   ; (tie), A4, Hi
+    .byte 4, 191, 15,  6, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 13, 13, 2, 0   
+
+    ; --- Beat 5-8 (F Major) - Lead: F5 -> C5 ---
+    .byte 4, 146,  4,  4, 1, 1   ; F5, F3, Kick
+    .byte 4, 191, 11, 11, 2, 0   ; (tie), F4, Hi
+    .byte 4, 191, 15,  4, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 11, 11, 2, 0   
+    .byte 4, 191,  4,  4, 1, 1   ; (tie), F3, Kick
+    .byte 4, 191, 11, 11, 2, 0   
+    .byte 4, 191, 15,  4, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 11, 11, 2, 0   
+
+    .byte 4, 143,  4,  4, 1, 1   ; C5, F3, Kick
+    .byte 4, 191, 11, 11, 2, 0   ; (tie), F4, Hi
+    .byte 4, 191, 15,  4, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 11, 11, 2, 0   ; (tie), F4, Hi
+    .byte 4, 146,  4,  4, 1, 1   ; F5, F3, Kick
+    .byte 4, 191, 11, 11, 2, 0   ; (tie), F4, Hi
+    .byte 4, 191, 15,  4, 3, 0   ; (tie), C5, Snare
+    .byte 4, 191, 11, 11, 2, 0   
+
+    ; --- Beat 9-12 (D Minor) - Lead: D5 -> A4 ---
+    .byte 4, 144,  2,  2, 1, 1   ; D5, D3, Kick
+    .byte 4, 191,  9,  9, 2, 0   ; (tie), D4, Hi
+    .byte 4, 191, 13,  2, 3, 0   ; (tie), A4, Snare
+    .byte 4, 191,  9,  9, 2, 0   
+    .byte 4, 191,  2,  2, 1, 1   ; (tie), D3, Kick
+    .byte 4, 191,  9,  9, 2, 0   
+    .byte 4, 191, 13,  2, 3, 0   ; (tie), A4, Snare
+    .byte 4, 191,  9,  9, 2, 0   
+
+    .byte 4, 141,  2,  2, 1, 1   ; A4, D3, Kick
+    .byte 4, 191,  9,  9, 2, 0   ; (tie), D4, Hi
+    .byte 4, 191, 13,  2, 3, 0   ; (tie), A4, Snare
+    .byte 4, 191,  9,  9, 2, 0   ; (tie), D4, Hi
+    .byte 4, 144,  2,  2, 1, 1   ; D5, D3, Kick
+    .byte 4, 191,  9,  9, 2, 0   ; (tie), D4, Hi
+    .byte 4, 191, 13,  2, 3, 0   ; (tie), A4, Snare
+    .byte 4, 191,  9,  9, 2, 0   
+
+    ; --- Beat 13-16 (E Minor) - Lead: B4 -> E4 ---
+    .byte 4, 142,  3,  3, 1, 1   ; B4, E3, Kick
+    .byte 4, 191, 10, 10, 2, 0   ; (tie), E4, Hi
+    .byte 4, 191, 14,  3, 3, 0   ; (tie), B4, Snare
+    .byte 4, 191, 10, 10, 2, 0   
+    .byte 4, 191,  3,  3, 1, 1   ; (tie), E3, Kick
+    .byte 4, 191, 10, 10, 2, 0   
+    .byte 4, 191, 14,  3, 3, 0   ; (tie), B4, Snare
+    .byte 4, 191, 10, 10, 2, 0   
+
+    .byte 4, 138,  3,  3, 1, 1   ; E4, E3, Kick
+    .byte 4, 191, 10, 10, 2, 0   ; (tie), E4, Hi
+    .byte 4, 191, 14,  3, 3, 0   ; (tie), B4, Snare
+    .byte 4, 191, 10, 10, 2, 0   ; (tie), E4, Hi
+    .byte 4, 142,  3,  3, 1, 1   ; B4, E3, Kick
+    .byte 4, 191, 10, 10, 2, 0   ; (tie), E4, Hi
+    .byte 4, 191, 14,  3, 3, 0   ; (tie), B4, Snare
+    .byte 4, 191, 10, 10, 2, 0   
 
     .byte 0              ; Loop
 
 game_over_seq:
     ; Sad A Minor arpeggio (A4 -> E4 -> C4 -> A3)
-    .byte 20, 141, 6, 0    ; A4 (with vibrato/duty), A3 Bass
-    .byte 20, 138, 0, 0    ; E4
-    .byte 20, 136, 0, 0    ; C4
-    .byte 90, 134, 6, 0    ; A3, A3 Bass
-    .byte 255,  0, 0, 0    ; Silence
+    ; Format: Dur, Sq1, Sq2, Tri, Noise, DPCM
+    .byte 20, 205, 13,  6, 0, 0    ; A4, A4, A3 Bass
+    .byte 20, 202, 10,  6, 0, 0    ; E4
+    .byte 20, 200,  8,  6, 0, 0    ; C4
+    .byte 90, 198,  6,  6, 0, 0    ; A3
+    .byte 255,  0,  0,  0, 0, 0    ; Silence
     .byte 0
 
 title_chr: .incbin "title.chr"
@@ -2007,8 +2213,14 @@ game_map:
     .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
     .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 
+
+.align 64
+dpcm_sample:
+    .incbin "dpcm_bass.dmc"
+
 ; =====================
 ; VECTORS
+
 ; =====================
 .segment "VECTORS"
 .word NMI
