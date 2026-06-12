@@ -40,6 +40,9 @@ tri_note: .res 1
 noise_note: .res 1
 player_hp: .res 1
 invuln_timer: .res 2
+sfx_state: .res 1
+sfx_timer: .res 1
+sfx_mask: .res 1
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -98,6 +101,8 @@ ClearOAM:
     LDA #0
     STA invuln_timer
     STA invuln_timer+1
+    STA sfx_state
+    STA sfx_mask
     
     ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
     LDX #$00        ; OAM Index
@@ -127,8 +132,10 @@ StorePal:
     BNE InitPlayerSpritesLoop
 
     ; --- APU Frame Counter IRQ Setup ---
-    LDA #$0F
-    STA $4015       ; Enable Sq1, Sq2, Tri, Noise
+    LDA #0
+    STA $4015
+    LDA #%00001111      ; Enable Square 1, Square 2, Triangle, Noise
+    STA $4015
     LDA #$00
     STA $4017       ; 4-step sequence, IRQ enabled
     LDA #1          ; Title screen song
@@ -790,6 +797,10 @@ CheckPlayerSlimeCollision:
     LDA #>60
     STA invuln_timer+1
 
+    ; Play Damage SFX (ID 1)
+    LDA #1
+    JSR PlaySFX
+
     ; Reduce HP
     LDA player_hp
     SEC
@@ -804,6 +815,9 @@ CheckPlayerSlimeCollision:
 @game_over:
     LDA #2
     STA game_state
+
+    LDA #3
+    JSR PlaySong    ; Play Game Over tune
 
     ; Hide all existing sprites
     LDX #0
@@ -822,8 +836,8 @@ CheckPlayerSlimeCollision:
     LDA #%00010000  ; Enable sprites, disable background
     STA $2001
     
-    LDA #0
-    JSR PlaySong    ; A=0 means silence song
+    ; Done processing collision
+    JMP DoneInput
 
 @no_collision:
     RTS
@@ -909,6 +923,25 @@ DrawGameOverSprites:
     LDA #156
     STA OAM_RAM+191
 
+    RTS
+
+PlaySFX:
+    CMP #1
+    BNE @done
+    ; --- Damage SFX (Noise) ---
+    LDA #1
+    STA sfx_state
+    LDA #$08        ; Mask Noise
+    STA sfx_mask
+    LDA #30         ; 30 frames
+    STA sfx_timer
+    
+    ; Init hardware
+    LDA #$3F
+    STA $400C       ; Noise volume 15, envelope disable
+    LDA #$08
+    STA $400F       ; Length counter
+@done:
     RTS
 
 UpdateHPBar:
@@ -1018,36 +1051,45 @@ PlaySong:
     SEI             ; Disable interrupts to prevent race condition on music_ptr
     PLA
     CMP #0
-    BNE @check_title
-    ; Silence song
+    BNE @chk_1
     LDA #<silence_seq
-    STA music_ptr
     STA music_start_ptr
     LDA #>silence_seq
-    STA music_ptr+1
     STA music_start_ptr+1
-    JMP @done
-
-@check_title:
+    JMP @init_music
+@chk_1:
     CMP #1
-    BNE @check_gameplay
+    BNE @chk_2
     LDA #<title_music_seq
-    STA music_ptr
     STA music_start_ptr
     LDA #>title_music_seq
-    STA music_ptr+1
     STA music_start_ptr+1
-    JMP @done
-
-@check_gameplay:
+    JMP @init_music
+@chk_2:
+    CMP #2
+    BNE @chk_3
     LDA #<music_seq
-    STA music_ptr
     STA music_start_ptr
     LDA #>music_seq
-    STA music_ptr+1
     STA music_start_ptr+1
-
+    JMP @init_music
+@chk_3:
+    CMP #3
+    BNE @done
+    LDA #<game_over_seq
+    STA music_start_ptr
+    LDA #>game_over_seq
+    STA music_start_ptr+1
+    JMP @init_music
 @done:
+    CLI
+    RTS
+
+@init_music:
+    LDA music_start_ptr
+    STA music_ptr
+    LDA music_start_ptr+1
+    STA music_ptr+1
     LDA #0
     STA music_wait      ; Start immediately
     STA sq1_note
@@ -1394,6 +1436,33 @@ IRQ:
     ; Acknowledge APU Frame Counter IRQ
     LDA $4015
 
+    ; --- SFX ENGINE ---
+    LDA sfx_state
+    BEQ @process_music
+
+    CMP #1
+    BNE @process_music
+    ; Damage SFX (Noise Sweep)
+    DEC sfx_timer
+    BEQ @end_sfx_noise
+    LDA sfx_timer
+    LSR A
+    LSR A
+    ORA #$01        ; Shift period down
+    STA $400E
+    JMP @process_music
+
+@end_sfx_noise:
+    LDA #$30
+    STA $400C       ; Silence Noise
+    JMP @end_sfx
+
+@end_sfx:
+    LDA #0
+    STA sfx_state
+    STA sfx_mask
+
+@process_music:
     ; Check wait timer
     LDA music_wait
     BNE _do_effects
@@ -1439,6 +1508,12 @@ _process_fetch:
     LDA (music_ptr), Y
     STA noise_note
     BEQ @skip_noise_init
+    
+    LDA sfx_mask
+    AND #$08
+    BNE @skip_noise_init
+
+    LDA noise_note
     TAX
     LDA #$05            ; envelope decay rate 5 (crisp hit)
     STA $400C
@@ -1460,6 +1535,10 @@ _do_effects:
     DEC music_wait
 
     ; --- Square 1 (Melody) ---
+    LDA sfx_mask
+    AND #$01
+    BNE _do_tri
+    
     LDA sq1_note
     AND #$3F
     BEQ _skip_sq1
@@ -1642,6 +1721,15 @@ music_seq:
     .byte 6, 144, 5, 2    ; D5, G3, Hihat
 
     .byte 0              ; Loop
+
+game_over_seq:
+    ; Sad A Minor arpeggio (A4 -> E4 -> C4 -> A3)
+    .byte 20, 141, 6, 0    ; A4 (with vibrato/duty), A3 Bass
+    .byte 20, 138, 0, 0    ; E4
+    .byte 20, 136, 0, 0    ; C4
+    .byte 90, 134, 6, 0    ; A3, A3 Bass
+    .byte 255,  0, 0, 0    ; Silence
+    .byte 0
 
 title_chr: .incbin "title.chr"
 title_nam: .incbin "title.nam"
