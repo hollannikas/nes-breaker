@@ -10,6 +10,12 @@
 sprite_x: .res 1
 sprite_y: .res 1
 buttons1: .res 1
+buttons1_prev: .res 1
+proj_active: .res 1
+proj_x: .res 1
+proj_y: .res 1
+proj_dir: .res 1
+proj_dist: .res 1
 nmi_ready: .res 1
 game_state: .res 1
 ptr: .res 2
@@ -85,6 +91,7 @@ ClearOAM:
     STA sprite_y
     LDA #0
     STA player_dir
+    STA proj_active
     
     LDA #64
     STA slime_x
@@ -232,7 +239,7 @@ CopyUICHRLoop:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #192    ; 12 tiles = 192 bytes
+    CPY #208    ; 13 tiles = 208 bytes
     BNE CopyUICHRLoop
 
 LoadNametable:
@@ -291,6 +298,7 @@ WAITVBLANK:
     JMP StateTitle
 
 @is_gameplay:
+    JSR HandleProjectile
     JMP StateGameplay
 @is_gameover:
     JMP StateGameOver
@@ -927,7 +935,11 @@ DrawGameOverSprites:
 
 PlaySFX:
     CMP #1
-    BNE @done
+    BEQ @play_id1
+    CMP #3
+    BEQ @play_id3
+    RTS
+@play_id1:
     ; --- Damage SFX (Noise) ---
     LDA #1
     STA sfx_state
@@ -941,7 +953,25 @@ PlaySFX:
     STA $400C       ; Noise volume 15, envelope disable
     LDA #$08
     STA $400F       ; Length counter
-@done:
+    RTS
+@play_id3:
+    ; --- Boop SFX (Square 1) ---
+    LDA #3
+    STA sfx_state
+    LDA #$01        ; Mask Sq1
+    STA sfx_mask
+    LDA #8          ; 8 frames
+    STA sfx_timer
+    
+    ; Init hardware
+    LDA #$BF
+    STA $4000       ; Sq1 duty 50%, vol 15
+    LDA #$00
+    STA $4001       ; Sweep off
+    LDA #$50        ; High pitch (timer = $0050)
+    STA $4002
+    LDA #$08
+    STA $4003       ; Trigger
     RTS
 
 UpdateHPBar:
@@ -1037,13 +1067,6 @@ UpdateHPBar:
     CPY #5          ; Only 5 blocks to stay under 8-sprite limit
     BNE @draw_blocks_loop
     
-    ; Hide unused OAM blocks (140-156) that were previously used
-    LDA #$FF
-    STA OAM_RAM+140
-    STA OAM_RAM+144
-    STA OAM_RAM+148
-    STA OAM_RAM+152
-    STA OAM_RAM+156
     RTS
 
 PlaySong:
@@ -1107,6 +1130,8 @@ PlaySong:
     RTS
 
 ReadController1:
+    LDA buttons1
+    STA buttons1_prev
     LDA #$01
     STA $4016
     LDA #$00
@@ -1407,6 +1432,145 @@ CheckSpriteCollision:
     LDA #1
     RTS
 
+HandleProjectile:
+    ; Check for B button to shoot
+    LDA buttons1_prev
+    EOR #$FF        ; Invert
+    AND buttons1
+    AND #$40        ; B button
+    BEQ UpdateProjectile
+    
+    ; B pressed this frame. Can we shoot?
+    LDA proj_active
+    BNE UpdateProjectile
+    
+    ; Spawn projectile
+    LDA #1
+    STA proj_active
+    LDA sprite_x
+    STA proj_x
+    LDA sprite_y
+    STA proj_y
+    LDA player_dir  ; 0=Right, 1=Left
+    STA proj_dir
+    LDA #0
+    STA proj_dist
+    
+UpdateProjectile:
+    LDA proj_active
+    BNE @active
+    RTS
+@active:
+    ; Move 3 pixels based on dir (0=Right, 1=Left)
+    LDA proj_dir
+    CMP #0
+    BEQ @move_right
+    CMP #1
+    BEQ @move_left
+    RTS
+
+@move_left:
+    LDA proj_x
+    SEC
+    SBC #3
+    STA proj_x
+    JMP @moved
+@move_right:
+    LDA proj_x
+    CLC
+    ADC #3
+    STA proj_x
+    
+@moved:
+    LDA proj_dist
+    CLC
+    ADC #3
+    STA proj_dist
+    CMP #48         ; 3 * 16 pixels
+    BCC @check_slime
+    LDA #0
+    STA proj_active
+    RTS
+    
+@check_slime:
+    ; AABB collision between proj and slime
+    ; Proj box: proj_x+2 to proj_x+6, proj_y+2 to proj_y+6
+    ; Slime box: slime_x to slime_x+16, slime_y to slime_y+16
+    
+    ; 1. proj_right < slime_left ?
+    LDA proj_x
+    CLC
+    ADC #6
+    CMP slime_x
+    BCC @no_hit
+    
+    ; 2. proj_left > slime_right ?
+    LDA slime_x
+    CLC
+    ADC #16
+    CMP proj_x
+    BCC @no_hit
+    
+    ; 3. proj_bottom < slime_top ?
+    LDA proj_y
+    CLC
+    ADC #6
+    CMP slime_y
+    BCC @no_hit
+    
+    ; 4. proj_top > slime_bottom ?
+    LDA slime_y
+    CLC
+    ADC #16
+    CMP proj_y
+    BCC @no_hit
+    
+    ; HIT!
+    LDA #0
+    STA proj_active
+    
+    ; Play SFX ID 3 (Boop)
+    LDA #3
+    JSR PlaySFX
+    
+    ; Respawn Slime
+    LDA sprite_x
+    CMP #128
+    BCS @spawn_left
+    LDA #200
+    STA slime_x
+    JMP @y_check
+@spawn_left:
+    LDA #40
+    STA slime_x
+@y_check:
+    LDA sprite_y
+    CMP #120
+    BCS @spawn_top
+    LDA #190
+    STA slime_y
+    RTS
+@spawn_top:
+    LDA #50
+    STA slime_y
+    
+@no_hit:
+    ; Draw Projectile
+    LDA proj_active
+    BEQ @hide_proj
+    LDA proj_y
+    STA OAM_RAM+140
+    LDA #$40        ; Tile index 64 (Star)
+    STA OAM_RAM+141
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+142
+    LDA proj_x
+    STA OAM_RAM+143
+    RTS
+@hide_proj:
+    LDA #255
+    STA OAM_RAM+140
+    RTS
 
 NMI: 
     ; OAM DMA
@@ -1441,7 +1605,12 @@ IRQ:
     BEQ @process_music
 
     CMP #1
-    BNE @process_music
+    BEQ @do_sfx1
+    CMP #3
+    BEQ @do_sfx3
+    JMP @process_music
+
+@do_sfx1:
     ; Damage SFX (Noise Sweep)
     DEC sfx_timer
     BEQ @end_sfx_noise
@@ -1455,6 +1624,17 @@ IRQ:
 @end_sfx_noise:
     LDA #$30
     STA $400C       ; Silence Noise
+    JMP @end_sfx
+
+@do_sfx3:
+    ; Boop SFX (Square 1)
+    DEC sfx_timer
+    BEQ @end_sfx_sq1
+    JMP @process_music
+
+@end_sfx_sq1:
+    LDA #$30
+    STA $4000
     JMP @end_sfx
 
 @end_sfx:
