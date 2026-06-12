@@ -1537,21 +1537,21 @@ UpdateProjectile:
     LDA sprite_x
     CMP #128
     BCS @spawn_left
-    LDA #200
+    LDA #176
     STA slime_x
     JMP @y_check
 @spawn_left:
-    LDA #40
+    LDA #64
     STA slime_x
 @y_check:
     LDA sprite_y
     CMP #120
     BCS @spawn_top
-    LDA #190
+    LDA #192
     STA slime_y
     RTS
 @spawn_top:
-    LDA #50
+    LDA #32
     STA slime_y
     
 @no_hit:
