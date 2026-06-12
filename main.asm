@@ -45,6 +45,7 @@ sq1_note: .res 1
 tri_note: .res 1
 noise_note: .res 1
 player_hp: .res 1
+player_score: .res 1
 invuln_timer: .res 2
 sfx_state: .res 1
 sfx_timer: .res 1
@@ -92,6 +93,7 @@ ClearOAM:
     LDA #0
     STA player_dir
     STA proj_active
+    STA player_score
     
     LDA #64
     STA slime_x
@@ -235,12 +237,18 @@ CopySlimeCHRLoop:
     LDA #>ui_chr
     STA ptr+1
     LDY #0
-CopyUICHRLoop:
+@loop1:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #208    ; 13 tiles = 208 bytes
-    BNE CopyUICHRLoop
+    BNE @loop1
+    INC ptr+1
+@loop2:
+    LDA (ptr), y
+    STA $2007
+    INY
+    CPY #112
+    BNE @loop2
 
 LoadNametable:
     LDA $2002
@@ -975,8 +983,37 @@ PlaySFX:
     RTS
 
 UpdateHPBar:
+    ; Draw Score Tens
+    LDA player_score
+    LSR A
+    LSR A
+    LSR A
+    LSR A
+    CLC
+    ADC #$41        ; Tile index 65 ('0')
+    STA OAM_RAM+145
+    LDA #8          ; Y pos
+    STA OAM_RAM+144
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+146
+    LDA #16         ; X pos
+    STA OAM_RAM+147
+
+    ; Draw Score Ones
+    LDA player_score
+    AND #$0F
+    CLC
+    ADC #$41        ; Tile index 65 ('0')
+    STA OAM_RAM+149
+    LDA #8          ; Y pos
+    STA OAM_RAM+148
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+150
+    LDA #24         ; X pos
+    STA OAM_RAM+151
+
     ; Draw 'H'
-    LDA #8          ; Y position
+    LDA #0          ; Y position
     STA OAM_RAM+112
     LDA #$34        ; Tile for 'H'
     STA OAM_RAM+113
@@ -986,7 +1023,7 @@ UpdateHPBar:
     STA OAM_RAM+115
 
     ; Draw 'P'
-    LDA #8          ; Y position
+    LDA #0          ; Y position
     STA OAM_RAM+116
     LDA #$35        ; Tile for 'P'
     STA OAM_RAM+117
@@ -1032,7 +1069,7 @@ UpdateHPBar:
     TAX             ; X = OAM index
 
     ; Y position
-    LDA #8
+    LDA #0
     STA OAM_RAM, x
     
     ; Determine tile (FF vs FE vs EE)
@@ -1532,6 +1569,28 @@ UpdateProjectile:
     ; Play SFX ID 3 (Boop)
     LDA #3
     JSR PlaySFX
+    
+    ; Increment Score (Pseudo-BCD)
+    LDA player_score
+    CLC
+    ADC #1
+    STA tile_temp
+    AND #$0F
+    CMP #$0A
+    BCC @save_score
+    
+    LDA tile_temp
+    CLC
+    ADC #6
+    STA tile_temp
+    CMP #$A0
+    BCC @save_score
+    
+    LDA #0
+    STA tile_temp
+@save_score:
+    LDA tile_temp
+    STA player_score
     
     ; Respawn Slime
     LDA sprite_x
