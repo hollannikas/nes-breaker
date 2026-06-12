@@ -16,6 +16,7 @@ ptr: .res 2
 map_row: .res 1
 map_col: .res 1
 tile_temp: .res 1
+irq_temp: .res 1
 temp_coord: .res 1
 col_x: .res 1
 col_y: .res 1
@@ -37,6 +38,8 @@ frame_counter: .res 1
 sq1_note: .res 1
 tri_note: .res 1
 noise_note: .res 1
+player_hp: .res 1
+invuln_timer: .res 2
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -88,6 +91,13 @@ ClearOAM:
     STA slime_dir_y
     LDA #0
     STA frame_counter
+    
+    LDA #100
+    STA player_hp
+    
+    LDA #0
+    STA invuln_timer
+    STA invuln_timer+1
     
     ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
     LDX #$00        ; OAM Index
@@ -204,6 +214,19 @@ CopySlimeCHRLoop:
     INY
     CPY #64     ; 4 tiles = 64 bytes
     BNE CopySlimeCHRLoop
+
+    ; Load UI CHR immediately after slime
+    LDA #<ui_chr
+    STA ptr
+    LDA #>ui_chr
+    STA ptr+1
+    LDY #0
+CopyUICHRLoop:
+    LDA (ptr), y
+    STA $2007
+    INY
+    CPY #80     ; 5 tiles = 80 bytes
+    BNE CopyUICHRLoop
 
 LoadNametable:
     LDA $2002
@@ -328,6 +351,20 @@ StartPressed:
     LDA #$3A        ; Light Green
     STA $2007
 
+    ; Load 3 UI colors into Sprite Palette 3 ($3F1D - $3F1F)
+    LDA $2002
+    LDA #$3F
+    STA $2006
+    LDA #$1D
+    STA $2006
+
+    LDA #$30        ; White outline
+    STA $2007
+    LDA #$16        ; Red (Full block)
+    STA $2007
+    LDA #$26        ; Light Red (Highlight)
+    STA $2007
+
     ; Reset Scroll
     LDA $2002
     LDA #$00
@@ -433,6 +470,8 @@ DoneInput:
     JSR UpdateSlime
 @skip_slime_move:
     JSR DrawSlime
+    JSR CheckPlayerSlimeCollision
+    JSR UpdateHPBar
 
 SkipSpriteUpdate:
 
@@ -445,8 +484,33 @@ SkipSpriteUpdate:
 ; sprites to form a 24x32 character.
 ; -----------------------------------------
 UpdateMetaSprite:
+    ; If invuln_timer > 0, blink by hiding player every 4th frame
+    LDA invuln_timer
+    ORA invuln_timer+1
+    BEQ @normal_draw
+    
+    LDA frame_counter
+    AND #$04
+    BNE @hide_player
+@normal_draw:
     LDX #$00        ; OAM offset (0, 4, 8, ... 92)
     LDY #$00        ; Tile loop counter (0 to 23)
+    JMP UpdateGridLoop
+
+@hide_player:
+    ; Move all player sprites offscreen
+    LDX #0
+@hide_loop:
+    LDA #$FF
+    STA OAM_RAM, x
+    INX
+    INX
+    INX
+    INX
+    CPX #96         ; 24 sprites * 4 = 96
+    BNE @hide_loop
+    RTS
+
 UpdateGridLoop:
     ; We need to modulo the Tile Loop counter by 12, because both layers 
     ; stack on top of each other and follow the exact same 3x4 grid!
@@ -639,6 +703,187 @@ DrawSlime:
     CLC
     ADC #8
     STA OAM_RAM+111
+    RTS
+
+CheckPlayerSlimeCollision:
+    ; Handle invulnerability timer
+    LDA invuln_timer
+    BNE @dec_timer
+    LDA invuln_timer+1
+    BNE @dec_timer_hi
+    JMP @do_collision_check
+
+@dec_timer_hi:
+    DEC invuln_timer+1
+@dec_timer:
+    DEC invuln_timer
+    RTS         ; Still invulnerable, skip collision
+
+@do_collision_check:
+    ; AABB Collision
+    ; Player right (sprite_x + 19) <= Slime left (slime_x + 2)
+    LDA sprite_x
+    CLC
+    ADC #19
+    STA temp_coord
+    LDA slime_x
+    CLC
+    ADC #2
+    CMP temp_coord
+    BCS @no_collision
+
+    ; Slime right (slime_x + 14) <= Player left (sprite_x + 4)
+    LDA slime_x
+    CLC
+    ADC #14
+    STA temp_coord
+    LDA sprite_x
+    CLC
+    ADC #4
+    CMP temp_coord
+    BCS @no_collision
+
+    ; Player bottom (sprite_y + 31) <= Slime top (slime_y + 2)
+    LDA sprite_y
+    CLC
+    ADC #31
+    STA temp_coord
+    LDA slime_y
+    CLC
+    ADC #2
+    CMP temp_coord
+    BCS @no_collision
+
+    ; Slime bottom (slime_y + 14) <= Player top (sprite_y + 16)
+    LDA slime_y
+    CLC
+    ADC #14
+    STA temp_coord
+    LDA sprite_y
+    CLC
+    ADC #16
+    CMP temp_coord
+    BCS @no_collision
+
+    ; Collision!
+    ; Set timer to 300 (5 seconds at 60 fps)
+    LDA #<300
+    STA invuln_timer
+    LDA #>300
+    STA invuln_timer+1
+
+    ; Reduce HP
+    LDA player_hp
+    SEC
+    SBC #10
+    BCS @hp_ok
+    LDA #0
+@hp_ok:
+    STA player_hp
+
+@no_collision:
+    RTS
+
+UpdateHPBar:
+    ; Draw 'H'
+    LDA #8          ; Y position
+    STA OAM_RAM+112
+    LDA #$34        ; Tile for 'H'
+    STA OAM_RAM+113
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+114
+    LDA #16         ; X position
+    STA OAM_RAM+115
+
+    ; Draw 'P'
+    LDA #8          ; Y position
+    STA OAM_RAM+116
+    LDA #$35        ; Tile for 'P'
+    STA OAM_RAM+117
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+118
+    LDA #24         ; X position
+    STA OAM_RAM+119
+
+    ; Calculate full double-blocks
+    LDA player_hp
+    LDX #0          ; FF block count
+@div20_loop:
+    CMP #20
+    BCC @div20_done
+    SBC #20
+    INX
+    JMP @div20_loop
+@div20_done:
+    STX tile_temp   ; tile_temp = number of FF tiles (0-5)
+    
+    ; A has the remainder (0-19)
+    CMP #10
+    BCC @rem_less_10
+    ; 10-19 remainder means 1 more box is full (FE tile)
+    LDA #$37        ; FE tile
+    JMP @store_mid
+@rem_less_10:
+    ; 0-9 remainder means no extra full boxes (EE tile)
+    LDA #$38        ; EE tile
+@store_mid:
+    STA temp_coord  ; Store the middle tile type
+    
+    LDY #0          ; Loop counter (0 to 4)
+    LDA #36         ; Initial X position for the first block
+    STA point_x     ; Just use point_x as temp X position
+@draw_blocks_loop:
+    ; Calculate OAM index: 120 + Y * 4
+    TYA
+    ASL A
+    ASL A
+    CLC
+    ADC #120
+    TAX             ; X = OAM index
+
+    ; Y position
+    LDA #8
+    STA OAM_RAM, x
+    
+    ; Determine tile (FF vs FE vs EE)
+    CPY tile_temp
+    BCC @full_block
+    BEQ @mid_block
+    ; Empty block
+    LDA #$38        ; EE tile
+    JMP @set_tile
+@mid_block:
+    LDA temp_coord
+    JMP @set_tile
+@full_block:
+    LDA #$36        ; FF tile
+@set_tile:
+    STA OAM_RAM+1, x
+    
+    ; Palette
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+2, x
+    
+    ; X position
+    LDA point_x
+    STA OAM_RAM+3, x
+    
+    ; Advance X position by 8
+    CLC
+    ADC #8
+    STA point_x
+    
+    INY
+    CPY #5          ; Only 5 blocks to stay under 8-sprite limit
+    BNE @draw_blocks_loop
+    
+    ; Hide unused OAM blocks (140-156) that were previously used
+    LDA #$FF
+    STA OAM_RAM+140
+    STA OAM_RAM+144
+    STA OAM_RAM+148
+    STA OAM_RAM+152
+    STA OAM_RAM+156
     RTS
 
 PlaySong:
@@ -1110,7 +1355,7 @@ _do_effects:
     
     ; Vibrato Effect
     LDA note_periods_lo, X
-    STA tile_temp
+    STA irq_temp
     
     LDA sq1_note
     AND #$40
@@ -1118,9 +1363,9 @@ _do_effects:
     LDA frame_counter
     AND #$02
     BEQ @no_vibrato
-    INC tile_temp       ; Add 1 to pitch period
+    INC irq_temp       ; Add 1 to pitch period
 @no_vibrato:
-    LDA tile_temp
+    LDA irq_temp
     STA $4002
     JMP _do_tri
 _skip_sq1:
@@ -1278,6 +1523,7 @@ player_chr: .incbin "player.chr"
 player_pal: .incbin "player.pal"
 bg_tiles: .incbin "bg_tiles.chr"
 slime_chr: .incbin "slime.chr"
+ui_chr: .incbin "ui.chr"
 
 game_bg_pal:
     ; Palette 0: Wooden Floor
