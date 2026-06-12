@@ -225,7 +225,7 @@ CopyUICHRLoop:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #80     ; 5 tiles = 80 bytes
+    CPY #192    ; 12 tiles = 192 bytes
     BNE CopyUICHRLoop
 
 LoadNametable:
@@ -277,8 +277,16 @@ WAITVBLANK:
 
     ; Game Logic: Machine State
     LDA game_state
-    BEQ StateTitle
+    CMP #1
+    BEQ @is_gameplay
+    CMP #2
+    BEQ @is_gameover
+    JMP StateTitle
+
+@is_gameplay:
     JMP StateGameplay
+@is_gameover:
+    JMP StateGameOver
 
 StateTitle:
     LDA buttons1
@@ -455,11 +463,21 @@ StateGameplay:
     LDA temp_coord
     STA sprite_x        ; Apply X movement
 @no_x_move:
+    JMP DoneInput
+
+StateGameOver:
+    LDA buttons1
+    AND #%00010000      ; Start is 5th bit
+    BNE @restart
+    JMP DoneInput
+@restart:
+    JMP RESET
 
 DoneInput:
 
     LDA game_state
-    BEQ SkipSpriteUpdate
+    CMP #1
+    BNE SkipSpriteUpdate
 
     JSR UpdateMetaSprite
     
@@ -766,22 +784,131 @@ CheckPlayerSlimeCollision:
     BCS @no_collision
 
     ; Collision!
-    ; Set timer to 300 (5 seconds at 60 fps)
-    LDA #<300
+    ; Set timer to 60 (1 second at 60 fps)
+    LDA #<60
     STA invuln_timer
-    LDA #>300
+    LDA #>60
     STA invuln_timer+1
 
     ; Reduce HP
     LDA player_hp
     SEC
-    SBC #10
+    SBC #20
     BCS @hp_ok
     LDA #0
 @hp_ok:
     STA player_hp
+    BEQ @game_over
+    JMP @no_collision
+
+@game_over:
+    LDA #2
+    STA game_state
+
+    ; Hide all existing sprites
+    LDX #0
+@hide_all_loop:
+    LDA #$FF
+    STA OAM_RAM, x
+    INX
+    INX
+    INX
+    INX
+    CPX #160
+    BNE @hide_all_loop
+
+    JSR DrawGameOverSprites
+
+    LDA #%00010000  ; Enable sprites, disable background
+    STA $2001
+    
+    LDA #0
+    JSR PlaySong    ; A=0 means silence song
 
 @no_collision:
+    RTS
+
+DrawGameOverSprites:
+    ; G
+    LDA #116        ; Y position
+    STA OAM_RAM+160
+    LDA #$39        ; G
+    STA OAM_RAM+161
+    LDA #$03        ; Palette 3
+    STA OAM_RAM+162
+    LDA #92         ; X position
+    STA OAM_RAM+163
+
+    ; A
+    LDA #116
+    STA OAM_RAM+164
+    LDA #$3A        ; A
+    STA OAM_RAM+165
+    LDA #$03
+    STA OAM_RAM+166
+    LDA #100
+    STA OAM_RAM+167
+
+    ; M
+    LDA #116
+    STA OAM_RAM+168
+    LDA #$3B        ; M
+    STA OAM_RAM+169
+    LDA #$03
+    STA OAM_RAM+170
+    LDA #108
+    STA OAM_RAM+171
+
+    ; E
+    LDA #116
+    STA OAM_RAM+172
+    LDA #$3C        ; E
+    STA OAM_RAM+173
+    LDA #$03
+    STA OAM_RAM+174
+    LDA #116
+    STA OAM_RAM+175
+
+    ; O
+    LDA #116
+    STA OAM_RAM+176
+    LDA #$3D        ; O
+    STA OAM_RAM+177
+    LDA #$03
+    STA OAM_RAM+178
+    LDA #132
+    STA OAM_RAM+179
+
+    ; V
+    LDA #116
+    STA OAM_RAM+180
+    LDA #$3E        ; V
+    STA OAM_RAM+181
+    LDA #$03
+    STA OAM_RAM+182
+    LDA #140
+    STA OAM_RAM+183
+
+    ; E
+    LDA #116
+    STA OAM_RAM+184
+    LDA #$3C        ; E
+    STA OAM_RAM+185
+    LDA #$03
+    STA OAM_RAM+186
+    LDA #148
+    STA OAM_RAM+187
+
+    ; R
+    LDA #116
+    STA OAM_RAM+188
+    LDA #$3F        ; R
+    STA OAM_RAM+189
+    LDA #$03
+    STA OAM_RAM+190
+    LDA #156
+    STA OAM_RAM+191
+
     RTS
 
 UpdateHPBar:
