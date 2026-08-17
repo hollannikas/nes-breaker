@@ -2132,96 +2132,101 @@ silence_seq:
     .byte 0
 
 title_music_seq:
-    ; Bombastic 5-Channel Theme
+    ; MSX Metal Gear Fighting Theme style
     ; Format: Dur, Sq1, Sq2, Tri, Noise, DPCM
-    
-    ; Measure 1: C Major (Epic)
-    .byte 6, 203, 10,  1, 2, 1   ; Sq1:E5 Sq2:E4 Tri:C3 Noise:Hi DPCM:KICK
-    .byte 6,   0,  0,  0, 2, 0   
-    .byte 6, 205, 12,  3, 3, 0   ; Sq1:G5 Sq2:G4 Tri:E3 Noise:Sn
-    .byte 6,   0,  0,  5, 2, 0   
-    .byte 6, 208,  8,  1, 2, 1   ; Sq1:C6 Sq2:C4 Tri:C3 Noise:Hi DPCM:KICK
-    .byte 6, 205, 10,  3, 2, 0   
-    .byte 6, 203,  8,  5, 3, 0   
-    .byte 6, 205, 12,  8, 2, 0   
+    ; --- Intro Fanfare ---
+    .byte   5, 141, 134,  6, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 143, 136,  6, 3, 0
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 145, 138,  6, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 148, 141,  6, 3, 0
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 147, 140,  5, 0, 1
+    .byte   5, 146, 139,  5, 0, 0
+    .byte   5, 145, 138,  5, 3, 0
+    .byte   5, 144, 137,  5, 0, 0
+    .byte   5, 145, 138,  3, 0, 1
+    .byte   5,   0,   0,  3, 0, 0
+    .byte   5, 209, 202,  3, 3, 0
+    .byte   5,   0,   0,  0, 0, 0
+    ; --- Section A: Infiltration / Fight Motif ---
+    .byte   5, 209,  10,  6, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 209,  10,  8, 3, 0
+    .byte   5,   0,   0,  9, 0, 0
+    .byte   5, 211,  12, 10, 0, 1
+    .byte   5,   0,   0, 10, 0, 0
+    .byte   5, 209,  10,  9, 3, 0
+    .byte   5,   0,   0,  8, 0, 0
+    .byte   5, 208,   9,  6, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 207,   8,  8, 3, 0
+    .byte   5,   0,   0,  9, 0, 0
+    .byte   5, 208,   9, 10, 0, 1
+    .byte   5, 209,  10, 10, 0, 0
+    .byte   5, 207,   8,  9, 3, 0
+    .byte   5, 205,   6,  8, 0, 0
+    .byte   5, 212,  13,  4, 0, 1
+    .byte   5,   0,   0,  4, 0, 0
+    .byte   5, 212,  13,  6, 3, 0
+    .byte   5,   0,   0,  8, 0, 0
+    .byte   5, 211,  12,  4, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 209,  10,  8, 3, 0
+    .byte   5,   0,   0,  4, 0, 0
+    .byte   5, 211,  12,  5, 0, 1
+    .byte   5,   0,   0,  5, 0, 0
+    .byte   5, 212,  13,  7, 3, 0
+    .byte   5,   0,   0,  9, 0, 0
+    .byte   5, 211,  12,  5, 0, 1
+    .byte   5,   0,   0,  7, 0, 0
+    .byte   5, 209,  10,  9, 3, 0
+    .byte   5,   0,   0,  5, 0, 0
+    .byte   5, 210,  11,  2, 0, 1
+    .byte   5,   0,   0,  2, 0, 0
+    .byte   5, 209,  10,  4, 3, 0
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 208,   9,  2, 0, 1
+    .byte   5,   0,   0,  4, 0, 0
+    .byte   5, 207,   8,  6, 3, 0
+    .byte   5,   0,   0,  2, 0, 0
+    .byte   5, 206,   7,  3, 0, 1
+    .byte   5, 207,   8,  3, 0, 0
+    .byte   5, 208,   9,  5, 3, 0
+    .byte   5, 209,  10,  7, 0, 0
+    .byte   5, 210,  11,  3, 0, 1
+    .byte   5, 209,  10,  5, 0, 0
+    .byte   5, 208,   9,  7, 3, 0
+    .byte   5, 206,   7,  3, 0, 0
+    ; --- Section B: Soaring Climax ---
+    .byte   5, 212,  17,  6, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 209,  15,  8, 3, 0
+    .byte   5,   0,   0,  9, 0, 0
+    .byte   5, 211,  16, 10, 0, 1
+    .byte   5,   0,   0, 10, 0, 0
+    .byte   5, 212,  17,  9, 3, 0
+    .byte   5,   0,   0,  8, 0, 0
+    .byte   5, 213,  19,  6, 0, 1
+    .byte   5,   0,   0,  6, 0, 0
+    .byte   5, 212,  17,  8, 3, 0
+    .byte   5,   0,   0,  9, 0, 0
+    .byte   5, 211,  16, 10, 0, 1
+    .byte   5,   0,   0, 10, 0, 0
+    .byte   5, 209,  15,  9, 3, 0
+    .byte   5,   0,   0,  8, 0, 0
+    .byte   5, 210,  11,  4, 0, 1
+    .byte   5, 211,  12,  4, 0, 0
+    .byte   5, 212,  13,  6, 3, 0
+    .byte   5, 211,  12,  8, 0, 0
+    .byte   5, 209,  10,  5, 0, 1
+    .byte   5, 208,   9,  7, 0, 0
+    .byte   5, 207,   8,  9, 3, 0
+    .byte   5, 205,   6,  6, 0, 0
+    .byte   0,   0,   0,  0, 0, 0    ; Loop
 
-    ; Measure 2: A Minor
-    .byte 6, 205, 13,  6, 2, 1   ; Sq1:G5 Sq2:A4 Tri:A3
-    .byte 6,   0,  0,  0, 2, 0   
-    .byte 6, 208, 15,  8, 3, 0   
-    .byte 6,   0,  0, 10, 2, 0   
-    .byte 6, 210, 10,  6, 2, 1   
-    .byte 6, 208, 12,  8, 2, 0   
-    .byte 6, 205, 10, 10, 3, 0   
-    .byte 6, 208, 13, 13, 2, 0   
-
-    ; Measure 3: F Major
-    .byte 6, 203, 11,  4, 2, 1   ; Sq1:E5 Sq2:F4 Tri:F3
-    .byte 6,   0,  0,  0, 2, 0   
-    .byte 6, 205, 13,  6, 3, 0   
-    .byte 6,   0,  0,  8, 2, 0   
-    .byte 6, 208, 11,  4, 2, 1   
-    .byte 6, 205, 13,  6, 2, 0   
-    .byte 6, 203, 11,  8, 3, 0   
-    .byte 6, 205, 13, 11, 2, 0   
-
-    ; Measure 4: G Major
-    .byte 6, 204, 12,  5, 2, 1   ; Sq1:F5 Sq2:G4 Tri:G3
-    .byte 6, 206, 14,  0, 2, 0   
-    .byte 6, 208, 16,  7, 3, 0   
-    .byte 6, 211, 19,  0, 2, 0   
-    .byte 6, 211, 19,  5, 2, 1   
-    .byte 6,   0,  0,  0, 2, 0   
-    .byte 6, 211, 19,  7, 3, 0   
-    .byte 6,   0,  0,  9, 2, 0   
-
-    ; ===============================
-    ; ITERATION 2: SOARING LEAD MELODY
-    ; ===============================
-    ; Format: Dur, Sq1, Sq2, Tri, Noise, DPCM
-    
-    ; Measure 1: C Major (Epic)
-    .byte 6, 148, 10, 1, 2, 1    ;  Sq1:E5 Sq2:E4 Tri:C3 Noise:Hi DPCM:KICK + LEAD
-    .byte 6, 191, 0, 0, 2, 0
-    .byte 6, 191, 12, 3, 3, 0    ;  Sq1:G5 Sq2:G4 Tri:E3 Noise:Sn + LEAD
-    .byte 6, 191, 0, 5, 2, 0
-    .byte 6, 147, 8, 1, 2, 1     ;  Sq1:C6 Sq2:C4 Tri:C3 Noise:Hi DPCM:KICK + LEAD
-    .byte 6, 191, 10, 3, 2, 0
-    .byte 6, 191, 8, 5, 3, 0
-    .byte 6, 191, 12, 8, 2, 0
-
-    ; Measure 2: A Minor
-    .byte 6, 148, 13, 6, 2, 1    ;  Sq1:G5 Sq2:A4 Tri:A3 + LEAD
-    .byte 6, 191, 0, 0, 2, 0
-    .byte 6, 191, 15, 8, 3, 0
-    .byte 6, 191, 0, 10, 2, 0
-    .byte 6, 145, 10, 6, 2, 1
-    .byte 6, 191, 12, 8, 2, 0
-    .byte 6, 191, 10, 10, 3, 0
-    .byte 6, 191, 13, 13, 2, 0
-
-    ; Measure 3: F Major
-    .byte 6, 146, 11, 4, 2, 1    ;  Sq1:E5 Sq2:F4 Tri:F3 + LEAD
-    .byte 6, 191, 0, 0, 2, 0
-    .byte 6, 191, 13, 6, 3, 0
-    .byte 6, 191, 0, 8, 2, 0
-    .byte 6, 145, 11, 4, 2, 1
-    .byte 6, 191, 13, 6, 2, 0
-    .byte 6, 191, 11, 8, 3, 0
-    .byte 6, 191, 13, 11, 2, 0
-
-    ; Measure 4: G Major
-    .byte 6, 146, 12, 5, 2, 1    ;  Sq1:F5 Sq2:G4 Tri:G3 + LEAD
-    .byte 6, 191, 14, 0, 2, 0
-    .byte 6, 191, 16, 7, 3, 0
-    .byte 6, 191, 19, 0, 2, 0
-    .byte 6, 143, 19, 5, 2, 1
-    .byte 6, 191, 0, 0, 2, 0
-    .byte 6, 191, 19, 7, 3, 0
-    .byte 6, 191, 0, 9, 2, 0
-    
-    
-    .byte 0              ; Loop
 
 music_seq:
     ; Chipzel style A Minor / F Major / D Minor / E Minor sequence
