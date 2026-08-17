@@ -52,6 +52,11 @@ invuln_timer: .res 2
 sfx_state: .res 1
 sfx_timer: .res 1
 sfx_mask: .res 1
+selected_slot: .res 1
+weapon_slots: .res 3
+slot_tiles_top: .res 6
+slot_tiles_bot: .res 6
+update_hud_tiles: .res 1
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -114,6 +119,16 @@ ClearOAM:
     STA invuln_timer+1
     STA sfx_state
     STA sfx_mask
+    STA selected_slot
+    
+    ; Initialize Weapon Slots: Slot 1 = Throwing Star (ID 1), Slots 2 & 3 = Empty (ID 0)
+    LDA #1
+    STA weapon_slots+0
+    LDA #0
+    STA weapon_slots+1
+    STA weapon_slots+2
+    STA update_hud_tiles
+    JSR UpdateWeaponSlots
     
     ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
     LDX #$00        ; OAM Index
@@ -249,8 +264,14 @@ CopySlimeCHRLoop:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #112
     BNE @loop2
+    INC ptr+1
+@loop3:
+    LDA (ptr), y
+    STA $2007
+    INY
+    CPY #48
+    BNE @loop3
 
 LoadNametable:
     LDA $2002
@@ -337,6 +358,7 @@ StartPressed:
     JSR LoadGameplayPalettes
 
     ; Draw our gameplay background map
+    JSR UpdateWeaponSlots
     JSR DrawMap
 
     ; Draw background attributes
@@ -488,6 +510,23 @@ StateGameplay:
     LDA temp_coord
     STA sprite_x        ; Apply X movement
 @no_x_move:
+
+    ; --- Select Button Check for Weapon Cycling ---
+    LDA buttons1_prev
+    EOR #$FF
+    AND buttons1
+    AND #$20            ; Select button (bit 5)
+    BEQ @no_select
+    
+    INC selected_slot
+    LDA selected_slot
+    CMP #3
+    BCC @slot_ok
+    LDA #0
+    STA selected_slot
+@slot_ok:
+    JSR UpdateWeaponSlots
+@no_select:
     JMP DoneInput
 
 StateGameOver:
@@ -846,7 +885,7 @@ CheckPlayerSlimeCollision:
     INX
     INX
     INX
-    CPX #160
+    CPX #0
     BNE @hide_all_loop
 
     JSR DrawGameOverSprites
@@ -1108,6 +1147,89 @@ UpdateHPBar:
     
     RTS
 
+; =========================================================
+; Subroutine: place_weapon
+; Inputs:
+;   A: Slot Index (0, 1, or 2)
+;   X: Weapon ID (0 = Empty Box, 1 = Throwing Star)
+; Description:
+;   Determines the 4 background tiles for slot A.
+;   Highlights the frame if slot A == selected_slot.
+;   Populates slot_tiles_top and slot_tiles_bot buffers.
+; =========================================================
+place_weapon:
+    PHA                 ; Save slot index
+    STX tile_temp       ; tile_temp = Weapon ID
+    
+    CMP selected_slot
+    BEQ @is_selected
+    
+    ; Normal (inactive slot)
+    LDA tile_temp
+    BEQ @norm_empty
+    LDA #$11            ; Star normal ($11, $12, $13, $14)
+    JMP @have_base_tile
+@norm_empty:
+    LDA #$09            ; Empty box normal ($09, $0A, $0B, $0C)
+    JMP @have_base_tile
+
+@is_selected:
+    ; Highlighted (active slot)
+    LDA tile_temp
+    BEQ @sel_empty
+    LDA #$15            ; Star highlighted ($15, $16, $17, $18)
+    JMP @have_base_tile
+@sel_empty:
+    LDA #$0D            ; Empty box highlighted ($0D, $0E, $0F, $10)
+
+@have_base_tile:
+    STA temp_coord      ; temp_coord = base tile ID
+    
+    PLA                 ; Restore slot index
+    PHA
+    ASL A
+    TAX                 ; X = buffer offset (0, 2, 4)
+    
+    ; Store Top-Left and Top-Right in slot_tiles_top
+    LDA temp_coord
+    STA slot_tiles_top, x
+    CLC
+    ADC #1
+    STA slot_tiles_top+1, x
+    
+    ; Store Bottom-Left and Bottom-Right in slot_tiles_bot
+    LDA temp_coord
+    CLC
+    ADC #2
+    STA slot_tiles_bot, x
+    CLC
+    ADC #1
+    STA slot_tiles_bot+1, x
+    
+    PLA                 ; Restore slot index
+    RTS
+
+; =========================================================
+; Subroutine: UpdateWeaponSlots
+; Updates background tile buffers for all 3 slots and flags NMI
+; =========================================================
+UpdateWeaponSlots:
+    LDA #0
+    LDX weapon_slots+0
+    JSR place_weapon
+    
+    LDA #1
+    LDX weapon_slots+1
+    JSR place_weapon
+    
+    LDA #2
+    LDX weapon_slots+2
+    JSR place_weapon
+    
+    LDA #1
+    STA update_hud_tiles
+    RTS
+
 PlaySong:
     PHA             ; Save song ID
     SEI             ; Disable interrupts to prevent race condition on music_ptr
@@ -1197,12 +1319,18 @@ LoadGameplayCHR:
     STA ptr+1
 
     LDY #$00
-@loop:
+@loop1:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #128        ; 8 tiles * 16 bytes = 128 bytes
-    BNE @loop
+    BNE @loop1
+    INC ptr+1
+@loop2:
+    LDA (ptr), y
+    STA $2007
+    INY
+    CPY #128        ; 256 + 128 = 384 bytes (24 tiles)
+    BNE @loop2
     RTS
 
 LoadGameplayPalettes:
@@ -1236,6 +1364,24 @@ DrawMap:
     LDA #0
     STA map_col
 @top_col_loop:
+    LDA map_row
+    BNE @top_normal
+    LDA map_col
+    CMP #12
+    BCC @top_normal
+    CMP #15
+    BCS @top_normal
+    ; Draw weapon slot top half
+    SEC
+    SBC #12
+    ASL A           ; A = (map_col - 12) * 2
+    TAX
+    LDA slot_tiles_top, x
+    STA $2007
+    LDA slot_tiles_top+1, x
+    STA $2007
+    JMP @top_next
+@top_normal:
     ; Calculate map index: map_row * 16 + map_col
     LDA map_row
     ASL A
@@ -1268,6 +1414,24 @@ DrawMap:
     LDA #0
     STA map_col
 @bot_col_loop:
+    LDA map_row
+    BNE @bot_normal
+    LDA map_col
+    CMP #12
+    BCC @bot_normal
+    CMP #15
+    BCS @bot_normal
+    ; Draw weapon slot bottom half
+    SEC
+    SBC #12
+    ASL A           ; A = (map_col - 12) * 2
+    TAX
+    LDA slot_tiles_bot, x
+    STA $2007
+    LDA slot_tiles_bot+1, x
+    STA $2007
+    JMP @bot_next
+@bot_normal:
     ; Calculate map index: map_row * 16 + map_col
     LDA map_row
     ASL A
@@ -1299,7 +1463,9 @@ DrawMap:
     INC map_row
     LDA map_row
     CMP #15
-    BNE @row_loop
+    BEQ @draw_map_done
+    JMP @row_loop
+@draw_map_done:
     RTS
 
 DrawAttributes:
@@ -1371,6 +1537,21 @@ DrawAttributes:
     STA tile_temp
 
 @write_attr:
+    ; Override palette for top row weapon slots
+    LDA map_row
+    BNE @store_attr
+    LDA map_col
+    CMP #6
+    BNE @chk_col7
+    LDA #$0A        ; Palette 2 for Slot 1 and Slot 2
+    STA tile_temp
+    JMP @store_attr
+@chk_col7:
+    CMP #7
+    BNE @store_attr
+    LDA #$46        ; Palette 2 for Slot 3, Palette 1 for Wall
+    STA tile_temp
+@store_attr:
     LDA tile_temp
     STA $2007
 
@@ -1479,7 +1660,13 @@ HandleProjectile:
     AND #$40        ; B button
     BEQ UpdateProjectile
     
-    ; B pressed this frame. Can we shoot?
+    ; Check if currently selected slot has throwing star (Weapon ID 1)
+    LDX selected_slot
+    LDA weapon_slots, x
+    CMP #1          ; 1 = Throwing Star
+    BNE UpdateProjectile
+    
+    ; B pressed this frame and throwing star equipped. Can we shoot?
     LDA proj_active
     BNE UpdateProjectile
     
@@ -1640,6 +1827,40 @@ NMI:
     LDA #$02
     STA $4014
 
+    ; Check if HUD tiles need update
+    LDA update_hud_tiles
+    BEQ @no_hud_update
+    LDA #0
+    STA update_hud_tiles
+
+    ; Write Top Row (6 tiles at $2018)
+    LDA $2002
+    LDA #$20
+    STA $2006
+    LDA #$18
+    STA $2006
+    LDX #0
+@top_loop:
+    LDA slot_tiles_top, x
+    STA $2007
+    INX
+    CPX #6
+    BNE @top_loop
+
+    ; Write Bottom Row (6 tiles at $2038)
+    LDA #$20
+    STA $2006
+    LDA #$38
+    STA $2006
+    LDX #0
+@bot_loop:
+    LDA slot_tiles_bot, x
+    STA $2007
+    INX
+    CPX #6
+    BNE @bot_loop
+
+@no_hud_update:
     ; Reset Scroll
     LDA $2002
     LDA #$00
@@ -2190,8 +2411,8 @@ game_bg_pal:
     .byte $0F, $07, $17, $27
     ; Palette 1: Tile Wall (brick / stone wall)
     .byte $0F, $02, $12, $22 ; Blue/gray stone wall
-    ; Palette 2: Unused
-    .byte $0F, $00, $10, $30
+    ; Palette 2: UI Weapon Slots
+    .byte $0F, $16, $26, $30 ; Black, Red, Light Red, White
     ; Palette 3: Unused
     .byte $0F, $0F, $0F, $0F
 
