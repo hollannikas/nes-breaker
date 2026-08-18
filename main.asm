@@ -16,6 +16,7 @@ proj_x: .res 1
 proj_y: .res 1
 proj_dir: .res 1
 proj_dist: .res 1
+proj_type: .res 1
 nmi_ready: .res 1
 game_state: .res 1
 ptr: .res 2
@@ -121,14 +122,16 @@ ClearOAM:
     STA sfx_mask
     STA selected_slot
     
-    ; Initialize Weapon Slots: Slot 1 = Throwing Star (ID 1), Slots 2 & 3 = Empty (ID 0)
+    ; Initialize Weapon Slots: Slot 1 = Throwing Star (ID 1), Slot 2 = Cat Paw (ID 2), Slot 3 = Empty (ID 0)
     LDA #1
     STA weapon_slots+0
-    LDA #0
+    LDA #2
     STA weapon_slots+1
+    LDA #0
     STA weapon_slots+2
-    STA update_hud_tiles
     JSR UpdateWeaponSlots
+    LDA #0
+    STA update_hud_tiles
     
     ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
     LDX #$00        ; OAM Index
@@ -270,7 +273,7 @@ CopySlimeCHRLoop:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #48
+    CPY #64
     BNE @loop3
 
 LoadNametable:
@@ -1167,6 +1170,12 @@ place_weapon:
     ; Normal (inactive slot)
     LDA tile_temp
     BEQ @norm_empty
+    CMP #1
+    BEQ @norm_star
+    ; Weapon 2: Cat Paw
+    LDA #$19            ; Cat Paw normal ($19, $1A, $1B, $1C)
+    JMP @have_base_tile
+@norm_star:
     LDA #$11            ; Star normal ($11, $12, $13, $14)
     JMP @have_base_tile
 @norm_empty:
@@ -1177,6 +1186,12 @@ place_weapon:
     ; Highlighted (active slot)
     LDA tile_temp
     BEQ @sel_empty
+    CMP #1
+    BEQ @sel_star
+    ; Weapon 2: Cat Paw
+    LDA #$1D            ; Cat Paw highlighted ($1D, $1E, $1F, $20)
+    JMP @have_base_tile
+@sel_star:
     LDA #$15            ; Star highlighted ($15, $16, $17, $18)
     JMP @have_base_tile
 @sel_empty:
@@ -1293,17 +1308,40 @@ PlaySong:
 ReadController1:
     LDA buttons1
     STA buttons1_prev
+
+@retry_read:
+    ; --- First Read into buttons1 ---
     LDA #$01
     STA $4016
     LDA #$00
     STA $4016
     LDX #$08
-ReadController1Loop:
+@loop1:
     LDA $4016
     LSR A
     ROL buttons1
     DEX
-    BNE ReadController1Loop
+    BNE @loop1
+
+    ; --- Second Read into tile_temp ---
+    LDA #$01
+    STA $4016
+    LDA #$00
+    STA $4016
+    LDX #$08
+@loop2:
+    LDA $4016
+    LSR A
+    ROL tile_temp
+    DEX
+    BNE @loop2
+
+    ; If a DPCM DMA cycle stole a clock during read, values will differ.
+    ; Retry until both consecutive reads match perfectly.
+    LDA buttons1
+    CMP tile_temp
+    BNE @retry_read
+
     RTS
 
 LoadGameplayCHR:
@@ -1329,7 +1367,6 @@ LoadGameplayCHR:
     LDA (ptr), y
     STA $2007
     INY
-    CPY #128        ; 256 + 128 = 384 bytes (24 tiles)
     BNE @loop2
     RTS
 
@@ -1660,24 +1697,35 @@ HandleProjectile:
     AND #$40        ; B button
     BEQ UpdateProjectile
     
-    ; Check if currently selected slot has throwing star (Weapon ID 1)
+    ; Check if currently selected slot has a weapon (Weapon ID != 0)
     LDX selected_slot
     LDA weapon_slots, x
-    CMP #1          ; 1 = Throwing Star
-    BNE UpdateProjectile
+    BEQ UpdateProjectile ; If empty, cannot shoot
     
-    ; B pressed this frame and throwing star equipped. Can we shoot?
+    ; Can we shoot?
     LDA proj_active
     BNE UpdateProjectile
     
-    ; Spawn projectile
+    ; Spawn projectile centered on 24x32 player metasprite
     LDA #1
     STA proj_active
+    LDX selected_slot
+    LDA weapon_slots, x
+    STA proj_type       ; 1 = Star, 2 = Iron Claw
+    
+    ; Center horizontally (24px metasprite -> +8 offset for 8px projectile)
     LDA sprite_x
+    CLC
+    ADC #8
     STA proj_x
+    
+    ; Center vertically (32px metasprite -> +12 offset for 8px projectile)
     LDA sprite_y
+    CLC
+    ADC #12
     STA proj_y
-    LDA player_dir  ; 0=Right, 1=Left
+    
+    LDA player_dir      ; 0=Right, 1=Left
     STA proj_dir
     LDA #0
     STA proj_dist
@@ -1712,8 +1760,22 @@ UpdateProjectile:
     CLC
     ADC #3
     STA proj_dist
-    CMP #48         ; 3 * 16 pixels
+
+    ; Check range based on projectile type
+    LDA proj_type
+    CMP #2          ; Claw
+    BEQ @claw_range
+    ; Star range: 48 pixels
+    LDA proj_dist
+    CMP #48
     BCC @check_slime
+    JMP @deactivate_proj
+@claw_range:
+    ; Claw range: 24 pixels (half range)
+    LDA proj_dist
+    CMP #24
+    BCC @check_slime
+@deactivate_proj:
     LDA #0
     STA proj_active
     RTS
@@ -1808,10 +1870,26 @@ UpdateProjectile:
     BEQ @hide_proj
     LDA proj_y
     STA OAM_RAM+140
+    
+    LDA proj_type
+    CMP #2
+    BEQ @draw_claw
+    ; Draw Star
     LDA #$40        ; Tile index 64 (Star)
     STA OAM_RAM+141
     LDA #$03        ; Palette 3
     STA OAM_RAM+142
+    JMP @store_proj_x
+@draw_claw:
+    LDA #$57        ; Tile index 87 (Iron Claw)
+    STA OAM_RAM+141
+    LDA #$03        ; Palette 3
+    LDX proj_dir    ; 0=Right, 1=Left
+    BEQ @claw_attr
+    ORA #$40        ; Horizontal flip
+@claw_attr:
+    STA OAM_RAM+142
+@store_proj_x:
     LDA proj_x
     STA OAM_RAM+143
     RTS
@@ -1826,6 +1904,11 @@ NMI:
     STA $2003
     LDA #$02
     STA $4014
+
+    ; Only update gameplay HUD tiles if in gameplay state (game_state == 1)
+    LDA game_state
+    CMP #1
+    BNE @no_hud_update
 
     ; Check if HUD tiles need update
     LDA update_hud_tiles
@@ -2412,8 +2495,8 @@ slime_chr: .incbin "slime.chr"
 ui_chr: .incbin "ui.chr"
 
 game_bg_pal:
-    ; Palette 0: Wooden Floor
-    .byte $0F, $07, $17, $27
+    ; Palette 0: Wooden Floor (Dark wood)
+    .byte $0F, $08, $07, $17
     ; Palette 1: Tile Wall (brick / stone wall)
     .byte $0F, $02, $12, $22 ; Blue/gray stone wall
     ; Palette 2: UI Weapon Slots
