@@ -58,6 +58,10 @@ weapon_slots: .res 3
 slot_tiles_top: .res 6
 slot_tiles_bot: .res 6
 update_hud_tiles: .res 1
+scroll_x: .res 1
+hud_hp_tiles: .res 3
+hud_bar_tiles: .res 4
+hud_score_tiles: .res 2
 
 .segment "OAM"
 OAM_RAM: .res 256
@@ -133,8 +137,18 @@ ClearOAM:
     LDA #0
     STA update_hud_tiles
     
-    ; Initialize OAM RAM for the 24 tiles (Layer 0: 0-11, Layer 1: 12-23)
-    LDX #$00        ; OAM Index
+    ; --- Setup Sprite 0 for Scanline Raster Split (Scanline 191) ---
+    LDA #191
+    STA OAM_RAM+0       ; Y Position = 191
+    LDA #$36            ; Tile index = $36 (solid 8x8 block)
+    STA OAM_RAM+1
+    LDA #%00100000      ; Priority = Behind background
+    STA OAM_RAM+2
+    LDA #120
+    STA OAM_RAM+3       ; X Position = 120
+    
+    ; Initialize OAM RAM for the 24 player tiles (OAM index 4..99)
+    LDX #$04        ; OAM Index starts after Sprite 0
     LDY #$00        ; Tile Index
 InitPlayerSpritesLoop:
     LDA #$FF        ; Initial Y (Offscreen)
@@ -360,12 +374,32 @@ StartPressed:
     ; Load Custom Background Palettes
     JSR LoadGameplayPalettes
 
-    ; Draw our gameplay background map
+    ; Initialize HP, Score, scroll, Sprite 0
+    LDA #100
+    STA player_hp
+    LDA #0
+    STA player_score
+    STA scroll_x
+
+    LDA #191
+    STA OAM_RAM+0
+    LDA #$36
+    STA OAM_RAM+1
+    LDA #%00100000
+    STA OAM_RAM+2
+    LDA #120
+    STA OAM_RAM+3
+
     JSR UpdateWeaponSlots
+    JSR UpdateHPBar
+
+    ; Draw our gameplay background map
     JSR DrawMap
 
     ; Draw background attributes
     JSR DrawAttributes
+    LDA #0
+    STA update_hud_tiles
 
     ; Load 3 player colors into Sprite Palette 0 ($3F11 - $3F13)
     LDA $2002
@@ -578,13 +612,13 @@ UpdateMetaSprite:
     AND #$04
     BNE @hide_player
 @normal_draw:
-    LDX #$00        ; OAM offset (0, 4, 8, ... 92)
+    LDX #$04        ; OAM offset starts at 4 (after Sprite 0)
     LDY #$00        ; Tile loop counter (0 to 23)
     JMP UpdateGridLoop
 
 @hide_player:
-    ; Move all player sprites offscreen
-    LDX #0
+    ; Move all player sprites offscreen (OAM 4..99)
+    LDX #4
 @hide_loop:
     LDA #$FF
     STA OAM_RAM, x
@@ -592,7 +626,7 @@ UpdateMetaSprite:
     INX
     INX
     INX
-    CPX #96         ; 24 sprites * 4 = 96
+    CPX #100        ; 24 sprites * 4 + 4 = 100
     BNE @hide_loop
     RTS
 
@@ -743,51 +777,51 @@ UpdateSlime:
 DrawSlime:
     ; Sprite 1 (Top Left)
     LDA slime_y
-    STA OAM_RAM+96
+    STA OAM_RAM+100
     LDA #$30        ; Tile 48
-    STA OAM_RAM+97
+    STA OAM_RAM+101
     LDA #$02        ; Palette 2
-    STA OAM_RAM+98
+    STA OAM_RAM+102
     LDA slime_x
-    STA OAM_RAM+99
+    STA OAM_RAM+103
 
     ; Sprite 2 (Top Right)
     LDA slime_y
-    STA OAM_RAM+100
+    STA OAM_RAM+104
     LDA #$31        ; Tile 49
-    STA OAM_RAM+101
+    STA OAM_RAM+105
     LDA #$02
-    STA OAM_RAM+102
+    STA OAM_RAM+106
     LDA slime_x
     CLC
     ADC #8
-    STA OAM_RAM+103
+    STA OAM_RAM+107
 
     ; Sprite 3 (Bottom Left)
     LDA slime_y
     CLC
     ADC #8
-    STA OAM_RAM+104
+    STA OAM_RAM+108
     LDA #$32        ; Tile 50
-    STA OAM_RAM+105
+    STA OAM_RAM+109
     LDA #$02
-    STA OAM_RAM+106
+    STA OAM_RAM+110
     LDA slime_x
-    STA OAM_RAM+107
+    STA OAM_RAM+111
 
     ; Sprite 4 (Bottom Right)
     LDA slime_y
     CLC
     ADC #8
-    STA OAM_RAM+108
+    STA OAM_RAM+112
     LDA #$33        ; Tile 51
-    STA OAM_RAM+109
+    STA OAM_RAM+113
     LDA #$02
-    STA OAM_RAM+110
+    STA OAM_RAM+114
     LDA slime_x
     CLC
     ADC #8
-    STA OAM_RAM+111
+    STA OAM_RAM+115
     RTS
 
 CheckPlayerSlimeCollision:
@@ -1027,127 +1061,102 @@ PlaySFX:
     RTS
 
 UpdateHPBar:
-    ; Draw Score Tens
+    ; --- 1. Compute Score Digits (Tens & Ones) ---
     LDA player_score
     LSR A
     LSR A
     LSR A
     LSR A
     CLC
-    ADC #$41        ; Tile index 65 ('0')
-    STA OAM_RAM+145
-    LDA #8          ; Y pos
-    STA OAM_RAM+144
-    LDA #$03        ; Palette 3
-    STA OAM_RAM+146
-    LDA #16         ; X pos
-    STA OAM_RAM+147
-
-    ; Draw Score Ones
+    ADC #$30        ; Tile index for '0'..'9'
+    STA hud_score_tiles+0
+    
     LDA player_score
     AND #$0F
     CLC
-    ADC #$41        ; Tile index 65 ('0')
-    STA OAM_RAM+149
-    LDA #8          ; Y pos
-    STA OAM_RAM+148
-    LDA #$03        ; Palette 3
-    STA OAM_RAM+150
-    LDA #24         ; X pos
-    STA OAM_RAM+151
+    ADC #$30
+    STA hud_score_tiles+1
 
-    ; Draw 'H'
-    LDA #0          ; Y position
-    STA OAM_RAM+112
-    LDA #$34        ; Tile for 'H'
-    STA OAM_RAM+113
-    LDA #$03        ; Palette 3
-    STA OAM_RAM+114
-    LDA #16         ; X position
-    STA OAM_RAM+115
-
-    ; Draw 'P'
-    LDA #0          ; Y position
-    STA OAM_RAM+116
-    LDA #$35        ; Tile for 'P'
-    STA OAM_RAM+117
-    LDA #$03        ; Palette 3
-    STA OAM_RAM+118
-    LDA #24         ; X position
-    STA OAM_RAM+119
-
-    ; Calculate full double-blocks
+    ; --- 2. Compute HP Text Digits (Hundreds, Tens, Ones) ---
     LDA player_hp
-    LDX #0          ; FF block count
-@div20_loop:
-    CMP #20
-    BCC @div20_done
-    SBC #20
-    INX
-    JMP @div20_loop
-@div20_done:
-    STX tile_temp   ; tile_temp = number of FF tiles (0-5)
-    
-    ; A has the remainder (0-19)
+    CMP #100
+    BCC @hp_under_100
+    LDA #$31        ; '1'
+    STA hud_hp_tiles+0
+    LDA #$30        ; '0'
+    STA hud_hp_tiles+1
+    STA hud_hp_tiles+2
+    JMP @compute_hp_bar
+@hp_under_100:
+    LDA #$00        ; space
+    STA hud_hp_tiles+0
+    LDA player_hp
+    LDX #0
+@div10_loop:
     CMP #10
-    BCC @rem_less_10
-    ; 10-19 remainder means 1 more box is full (FE tile)
-    LDA #$37        ; FE tile
-    JMP @store_mid
-@rem_less_10:
-    ; 0-9 remainder means no extra full boxes (EE tile)
-    LDA #$38        ; EE tile
-@store_mid:
-    STA temp_coord  ; Store the middle tile type
-    
-    LDY #0          ; Loop counter (0 to 4)
-    LDA #36         ; Initial X position for the first block
-    STA point_x     ; Just use point_x as temp X position
-@draw_blocks_loop:
-    ; Calculate OAM index: 120 + Y * 4
-    TYA
-    ASL A
-    ASL A
+    BCC @div10_done
+    SBC #10
+    INX
+    JMP @div10_loop
+@div10_done:
+    PHA             ; Save ones
+    TXA
     CLC
-    ADC #120
-    TAX             ; X = OAM index
+    ADC #$30
+    STA hud_hp_tiles+1
+    PLA             ; Restore ones
+    CLC
+    ADC #$30
+    STA hud_hp_tiles+2
 
-    ; Y position
-    LDA #0
-    STA OAM_RAM, x
-    
-    ; Determine tile (FF vs FE vs EE)
-    CPY tile_temp
-    BCC @full_block
-    BEQ @mid_block
-    ; Empty block
-    LDA #$38        ; EE tile
-    JMP @set_tile
-@mid_block:
-    LDA temp_coord
-    JMP @set_tile
-@full_block:
-    LDA #$36        ; FF tile
-@set_tile:
-    STA OAM_RAM+1, x
-    
-    ; Palette
-    LDA #$03        ; Palette 3
-    STA OAM_RAM+2, x
-    
-    ; X position
-    LDA point_x
-    STA OAM_RAM+3, x
-    
-    ; Advance X position by 8
-    CLC
-    ADC #8
-    STA point_x
-    
-    INY
-    CPY #5          ; Only 5 blocks to stay under 8-sprite limit
-    BNE @draw_blocks_loop
-    
+@compute_hp_bar:
+    ; --- 3. Compute HP Bar (4 units) ---
+    LDA player_hp
+    CMP #25
+    BCS @bar1_full
+    LDA #$5F        ; empty '-'
+    STA hud_bar_tiles+0
+    JMP @bar2_check
+@bar1_full:
+    LDA #$5E        ; full '='
+    STA hud_bar_tiles+0
+
+@bar2_check:
+    LDA player_hp
+    CMP #50
+    BCS @bar2_full
+    LDA #$5F
+    STA hud_bar_tiles+1
+    JMP @bar3_check
+@bar2_full:
+    LDA #$5E
+    STA hud_bar_tiles+1
+
+@bar3_check:
+    LDA player_hp
+    CMP #75
+    BCS @bar3_full
+    LDA #$5F
+    STA hud_bar_tiles+2
+    JMP @bar4_check
+@bar3_full:
+    LDA #$5E
+    STA hud_bar_tiles+2
+
+@bar4_check:
+    LDA player_hp
+    CMP #100
+    BCS @bar4_full
+    LDA #$5F
+    STA hud_bar_tiles+3
+    JMP @bar_done
+@bar4_full:
+    LDA #$5E
+    STA hud_bar_tiles+3
+
+@bar_done:
+    LDA #1
+    STA update_hud_tiles
     RTS
 
 ; =========================================================
@@ -1348,7 +1357,7 @@ LoadGameplayCHR:
     LDA $2002
     LDA #$00
     STA $2006
-    LDA #$10        ; Start at tile index $01 (PPU address $0010)
+    LDA #$00        ; Start at tile index $00 (PPU address $0000)
     STA $2006
     
     LDA #<bg_tiles
@@ -1356,18 +1365,16 @@ LoadGameplayCHR:
     LDA #>bg_tiles
     STA ptr+1
 
+    LDX #16         ; 16 pages * 256 bytes = 4096 bytes
     LDY #$00
-@loop1:
+@page_loop:
     LDA (ptr), y
     STA $2007
     INY
-    BNE @loop1
+    BNE @page_loop
     INC ptr+1
-@loop2:
-    LDA (ptr), y
-    STA $2007
-    INY
-    BNE @loop2
+    DEX
+    BNE @page_loop
     RTS
 
 LoadGameplayPalettes:
@@ -1401,24 +1408,6 @@ DrawMap:
     LDA #0
     STA map_col
 @top_col_loop:
-    LDA map_row
-    BNE @top_normal
-    LDA map_col
-    CMP #12
-    BCC @top_normal
-    CMP #15
-    BCS @top_normal
-    ; Draw weapon slot top half
-    SEC
-    SBC #12
-    ASL A           ; A = (map_col - 12) * 2
-    TAX
-    LDA slot_tiles_top, x
-    STA $2007
-    LDA slot_tiles_top+1, x
-    STA $2007
-    JMP @top_next
-@top_normal:
     ; Calculate map index: map_row * 16 + map_col
     LDA map_row
     ASL A
@@ -1452,25 +1441,6 @@ DrawMap:
     STA map_col
 @bot_col_loop:
     LDA map_row
-    BNE @bot_normal
-    LDA map_col
-    CMP #12
-    BCC @bot_normal
-    CMP #15
-    BCS @bot_normal
-    ; Draw weapon slot bottom half
-    SEC
-    SBC #12
-    ASL A           ; A = (map_col - 12) * 2
-    TAX
-    LDA slot_tiles_bot, x
-    STA $2007
-    LDA slot_tiles_bot+1, x
-    STA $2007
-    JMP @bot_next
-@bot_normal:
-    ; Calculate map index: map_row * 16 + map_col
-    LDA map_row
     ASL A
     ASL A
     ASL A
@@ -1499,10 +1469,198 @@ DrawMap:
 
     INC map_row
     LDA map_row
-    CMP #15
-    BEQ @draw_map_done
+    CMP #12         ; 12 metatile rows = 24 tile rows (Rows 0..23)
+    BEQ @draw_hud_section
     JMP @row_loop
-@draw_map_done:
+
+@draw_hud_section:
+    ; --- Draw Bottom Status Bar (Rows 24..29, starting at $2300) ---
+    ; Row 24: Top Border ($2300)
+    LDA #$23        ; Top-Left corner
+    STA $2007
+    LDX #30
+@r24_loop:
+    LDA #$21        ; Solid horizontal divider line (Sprite 0 hit anchor!)
+    STA $2007
+    DEX
+    BNE @r24_loop
+    LDA #$24        ; Top-Right corner
+    STA $2007
+
+    ; Row 25: Upper Status Line ($2320)
+    LDA #$22        ; |
+    STA $2007
+    ; LEVEL 1 (8 chars)
+    LDA #$00        ; space
+    STA $2007
+    LDA #$4C        ; L
+    STA $2007
+    LDA #$45        ; E
+    STA $2007
+    LDA #$56        ; V
+    STA $2007
+    LDA #$45        ; E
+    STA $2007
+    LDA #$4C        ; L
+    STA $2007
+    LDA #$00        ; space
+    STA $2007
+    LDA #$31        ; 1
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; HP: 100 (8 chars)
+    LDA #$00        ; space
+    STA $2007
+    LDA #$48        ; H
+    STA $2007
+    LDA #$50        ; P
+    STA $2007
+    LDA #$5B        ; :
+    STA $2007
+    LDA #$00        ; space
+    STA $2007
+    LDA hud_hp_tiles+0
+    STA $2007
+    LDA hud_hp_tiles+1
+    STA $2007
+    LDA hud_hp_tiles+2
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; 3 Weapon Slots Top (8 chars)
+    LDA slot_tiles_top+0
+    STA $2007
+    LDA slot_tiles_top+1
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_top+2
+    STA $2007
+    LDA slot_tiles_top+3
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_top+4
+    STA $2007
+    LDA slot_tiles_top+5
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; SCR (3 chars)
+    LDA #$53        ; S
+    STA $2007
+    LDA #$43        ; C
+    STA $2007
+    LDA #$52        ; R
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; Row 26: Lower Status Line ($2340)
+    LDA #$22        ; |
+    STA $2007
+    ; HP Bar [====] (8 chars)
+    LDA #$00
+    STA $2007
+    LDA #$5C        ; [
+    STA $2007
+    LDA hud_bar_tiles+0
+    STA $2007
+    LDA hud_bar_tiles+1
+    STA $2007
+    LDA hud_bar_tiles+2
+    STA $2007
+    LDA hud_bar_tiles+3
+    STA $2007
+    LDA #$5D        ; ]
+    STA $2007
+    LDA #$00
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; Lives: # x 3 (8 chars)
+    LDA #$00
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA #$62        ; Mini cat head icon (#)
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA #$61        ; x
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA #$33        ; 3
+    STA $2007
+    LDA #$00
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; 3 Weapon Slots Bot (8 chars)
+    LDA slot_tiles_bot+0
+    STA $2007
+    LDA slot_tiles_bot+1
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_bot+2
+    STA $2007
+    LDA slot_tiles_bot+3
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_bot+4
+    STA $2007
+    LDA slot_tiles_bot+5
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; Score Digits (3 chars)
+    LDA #$00
+    STA $2007
+    LDA hud_score_tiles+0
+    STA $2007
+    LDA hud_score_tiles+1
+    STA $2007
+
+    LDA #$22        ; |
+    STA $2007
+
+    ; Row 27: Bottom Border ($2360)
+    LDA #$25        ; Bottom-Left corner
+    STA $2007
+    LDX #30
+@r27_loop:
+    LDA #$29        ; Solid horizontal bottom line
+    STA $2007
+    DEX
+    BNE @r27_loop
+    LDA #$26        ; Bottom-Right corner
+    STA $2007
+
+    ; Rows 28, 29: Blank ($2380..$23BF = 64 bytes)
+    LDX #64
+    LDA #$00
+@r28_29_loop:
+    STA $2007
+    DEX
+    BNE @r28_29_loop
+
     RTS
 
 DrawAttributes:
@@ -1513,8 +1671,9 @@ DrawAttributes:
     LDA #$C0
     STA $2006
 
+    ; Rows 0..5 (6 rows * 8 = 48 bytes): Map attributes
     LDA #0
-    STA map_row     ; ar (0..7)
+    STA map_row     ; ar (0..5)
 @ar_loop:
     LDA #0
     STA map_col     ; ac (0..7)
@@ -1546,14 +1705,6 @@ DrawAttributes:
     STA tile_temp   ; tile_temp = (TR << 2) | TL
 
     ; 3. BL and BR
-    LDA map_row
-    CMP #7          ; Is it the last attribute row?
-    BNE @read_bl_br
-    ; If ar == 7, BL and BR are floor (0)
-    JMP @write_attr
-
-@read_bl_br:
-    ; BL index is X + 16
     LDA game_map+16, x
     ASL A
     ASL A
@@ -1562,7 +1713,7 @@ DrawAttributes:
     ORA tile_temp
     STA tile_temp
 
-    ; BR index is X + 17
+    ; 4. BR
     LDA game_map+17, x
     ASL A
     ASL A
@@ -1571,25 +1722,6 @@ DrawAttributes:
     ASL A
     ASL A           ; Shift left by 6
     ORA tile_temp
-    STA tile_temp
-
-@write_attr:
-    ; Override palette for top row weapon slots
-    LDA map_row
-    BNE @store_attr
-    LDA map_col
-    CMP #6
-    BNE @chk_col7
-    LDA #$0A        ; Palette 2 for Slot 1 and Slot 2
-    STA tile_temp
-    JMP @store_attr
-@chk_col7:
-    CMP #7
-    BNE @store_attr
-    LDA #$46        ; Palette 2 for Slot 3, Palette 1 for Wall
-    STA tile_temp
-@store_attr:
-    LDA tile_temp
     STA $2007
 
     INC map_col
@@ -1599,20 +1731,31 @@ DrawAttributes:
 
     INC map_row
     LDA map_row
-    CMP #8
+    CMP #6          ; 6 attribute rows (covers 24 tile rows)
     BNE @ar_loop
+
+    ; Rows 6 & 7 of Attribute Table (16 bytes at $23E8..$23FF): All Palette 2 (%10101010 = $AA) for Status Bar!
+    LDX #16
+    LDA #$AA
+@hud_attr_loop:
+    STA $2007
+    DEX
+    BNE @hud_attr_loop
+
     RTS
 
 CheckPointCollision:
-    ; Check if point_y is out of bounds
+    ; Check if point_y is out of bounds (Playfield is 192 pixels high)
     LDA point_y
-    CMP #240
+    CMP #192
     BCS @collision
 
     LSR A
     LSR A
     LSR A
-    LSR A           ; A = row (0..14)
+    LSR A           ; A = row (0..11)
+    CMP #12
+    BCS @collision
     ASL A
     ASL A
     ASL A
@@ -1857,45 +2000,137 @@ UpdateProjectile:
     LDA sprite_y
     CMP #120
     BCS @spawn_top
-    LDA #192
+    LDA #144
     STA slime_y
     RTS
 @spawn_top:
     LDA #32
     STA slime_y
-    
+
 @no_hit:
     ; Draw Projectile
     LDA proj_active
     BEQ @hide_proj
     LDA proj_y
-    STA OAM_RAM+140
+    STA OAM_RAM+116
     
     LDA proj_type
     CMP #2
     BEQ @draw_claw
     ; Draw Star
     LDA #$40        ; Tile index 64 (Star)
-    STA OAM_RAM+141
+    STA OAM_RAM+117
     LDA #$03        ; Palette 3
-    STA OAM_RAM+142
+    STA OAM_RAM+118
     JMP @store_proj_x
 @draw_claw:
     LDA #$57        ; Tile index 87 (Iron Claw)
-    STA OAM_RAM+141
+    STA OAM_RAM+117
     LDA #$03        ; Palette 3
     LDX proj_dir    ; 0=Right, 1=Left
     BEQ @claw_attr
     ORA #$40        ; Horizontal flip
 @claw_attr:
-    STA OAM_RAM+142
+    STA OAM_RAM+118
 @store_proj_x:
     LDA proj_x
-    STA OAM_RAM+143
+    STA OAM_RAM+119
     RTS
 @hide_proj:
     LDA #255
-    STA OAM_RAM+140
+    STA OAM_RAM+116
+    RTS
+
+FlushHUDTiles:
+    LDA update_hud_tiles
+    BNE @do_flush
+    RTS
+@do_flush:
+    LDA #0
+    STA update_hud_tiles
+
+    ; 1. Write Weapon Slots Top (Row 25, Cols 19..26: $2333..$233A)
+    LDA $2002
+    LDA #$23
+    STA $2006
+    LDA #$33
+    STA $2006
+    LDA slot_tiles_top+0
+    STA $2007
+    LDA slot_tiles_top+1
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_top+2
+    STA $2007
+    LDA slot_tiles_top+3
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_top+4
+    STA $2007
+    LDA slot_tiles_top+5
+    STA $2007
+
+    ; 2. Write Weapon Slots Bot (Row 26, Cols 19..26: $2353..$235A)
+    LDA #$23
+    STA $2006
+    LDA #$53
+    STA $2006
+    LDA slot_tiles_bot+0
+    STA $2007
+    LDA slot_tiles_bot+1
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_bot+2
+    STA $2007
+    LDA slot_tiles_bot+3
+    STA $2007
+    LDA #$00
+    STA $2007
+    LDA slot_tiles_bot+4
+    STA $2007
+    LDA slot_tiles_bot+5
+    STA $2007
+
+    ; 3. Write HP Digits (Row 25, Cols 15..17: $232F..$2331)
+    LDA #$23
+    STA $2006
+    LDA #$2F
+    STA $2006
+    LDA hud_hp_tiles+0
+    STA $2007
+    LDA hud_hp_tiles+1
+    STA $2007
+    LDA hud_hp_tiles+2
+    STA $2007
+
+    ; 4. Write HP Bar (Row 26, Cols 3..6: $2343..$2346)
+    LDA #$23
+    STA $2006
+    LDA #$43
+    STA $2006
+    LDA hud_bar_tiles+0
+    STA $2007
+    LDA hud_bar_tiles+1
+    STA $2007
+    LDA hud_bar_tiles+2
+    STA $2007
+    LDA hud_bar_tiles+3
+    STA $2007
+
+    ; 5. Write Score Digits (Row 26, Cols 29..30: $235D..$235E)
+    LDA #$23
+    STA $2006
+    LDA #$5D
+    STA $2006
+    LDA hud_score_tiles+0
+    STA $2007
+    LDA hud_score_tiles+1
+    STA $2007
+
+@done:
     RTS
 
 NMI: 
@@ -1908,49 +2143,49 @@ NMI:
     ; Only update gameplay HUD tiles if in gameplay state (game_state == 1)
     LDA game_state
     CMP #1
-    BNE @no_hud_update
+    BNE @no_gameplay_nmi
 
-    ; Check if HUD tiles need update
-    LDA update_hud_tiles
-    BEQ @no_hud_update
-    LDA #0
-    STA update_hud_tiles
+    JSR FlushHUDTiles
 
-    ; Write Top Row (6 tiles at $2018)
-    LDA $2002
-    LDA #$20
-    STA $2006
-    LDA #$18
-    STA $2006
-    LDX #0
-@top_loop:
-    LDA slot_tiles_top, x
-    STA $2007
-    INX
-    CPX #6
-    BNE @top_loop
+    ; Set Playfield Scroll
+    LDA $2002           ; Reset PPU scroll latch
+    LDA scroll_x
+    STA $2005           ; Scroll X
+    LDA #$00
+    STA $2005           ; Scroll Y
+    LDA #$88            ; Base nametable $2000, 8x8 sprites, bg table $0000, sprite table $1000, NMI on
+    STA $2000
 
-    ; Write Bottom Row (6 tiles at $2038)
-    LDA #$20
-    STA $2006
-    LDA #$38
-    STA $2006
-    LDX #0
-@bot_loop:
-    LDA slot_tiles_bot, x
-    STA $2007
-    INX
-    CPX #6
-    BNE @bot_loop
+    LDA #1
+    STA nmi_ready
 
-@no_hud_update:
+    ; Wait for Sprite 0 flag to clear (end of VBlank)
+@wait_s0_clear:
+    BIT $2002
+    BVS @wait_s0_clear
+
+    ; Wait for Sprite 0 flag to set (scanline 192 reached)
+@wait_s0_hit:
+    BIT $2002
+    BVC @wait_s0_hit
+
+    ; === SPRITE 0 HIT OCCURRED! ===
+    ; Immediately lock scroll to (0, 0) for the bottom status bar!
+    LDA #$00
+    STA $2005           ; Scroll X = 0
+    STA $2005           ; Scroll Y = 0
+    LDA #$88            ; Lock to nametable $2000, bg $0000, sprites $1000
+    STA $2000
+    RTI
+
+@no_gameplay_nmi:
     ; Reset Scroll
     LDA $2002
     LDA #$00
     STA $2005
     STA $2005
 
-    ; Set NMI Ready
+    ; Set NMI Ready for Title Screen and Game Over
     LDA #$01
     STA nmi_ready
     RTI
@@ -2505,7 +2740,7 @@ game_bg_pal:
     .byte $0F, $0F, $0F, $0F
 
 game_map:
-    ; 15 rows of 16 metatiles. 0 = Wooden floor (passable), 1 = Tile wall (impassable)
+    ; 12 rows of 16 metatiles (192 pixels high). 0 = Wooden floor, 1 = Tile wall
     .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
     .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
     .byte 1,0,1,1,0,0,1,1,1,1,0,0,1,1,0,1
@@ -2517,9 +2752,6 @@ game_map:
     .byte 1,0,0,0,0,1,1,1,1,1,1,0,0,0,0,1
     .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
     .byte 1,0,1,1,0,0,1,1,1,1,0,0,1,1,0,1
-    .byte 1,0,1,1,0,0,1,1,1,1,0,0,1,1,0,1
-    .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
-    .byte 1,0,0,0,0,0,0,0,0,0,0,0,0,0,0,1
     .byte 1,1,1,1,1,1,1,1,1,1,1,1,1,1,1,1
 
 
